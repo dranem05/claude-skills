@@ -1,0 +1,7 @@
+cp local.md first.md
+R1=$(bash "$GD/gdsync" init --local first.md --label shared --mode pull-only --export other.md | sed -n 's/^RUN=//p')
+R2=$(bash "$GD/gdsync" init --local local.md --label shared --mode pull-only | sed -n 's/^RUN=//p')
+[ "$R1" = "$R2" ] && echo SAME_RUN_DIR || echo DISTINCT_RUN_DIRS
+[ -f "$R2/drive.md" ] && echo STALE_SNAPSHOT_PRESENT || echo NO_STALE_SNAPSHOT
+bash "$GD/gdsync" swap --run "$R2" --start 'START_X' --end 'END_X' >/dev/null 2>&1
+grep -q 'DOC-ONE SECRET' local.md && echo CONTAMINATED || echo CLEAN

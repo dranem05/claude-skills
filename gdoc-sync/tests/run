@@ -26,7 +26,12 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 # the pristine engine and reported green.
 GD="${GD:-$HERE/../scripts}"
 CASES="$HERE/cases"
-ONLY="${2:-}"
+ONLY=""
+case "${1:-}" in
+  --inner|--canary|"") ONLY="${2:-}" ;;
+  --only)              ONLY="${2:-}" ;;
+  *)                   ONLY="$1" ;;
+esac
 pass=0; fail=0; failed_names=""
 
 run_one() {
@@ -44,14 +49,29 @@ run_one() {
 
   local wd; wd=$(mktemp -d)
   [ -d "$dir/in" ] && cp -R "$dir/in/." "$wd/" 2>/dev/null
-  out=$(cd "$wd" && GD="$GD" bash "$dir/cmd" 2>&1); rc=$?
+  # Per-case TMPDIR. Run directories are derived from TMPDIR, so a shared one
+  # lets a leftover drive.md from an earlier run satisfy a case whose own init
+  # never produced one -- 19 of 29 cases passed on this machine against an
+  # engine whose init was deliberately broken, and failed on a fresh TMPDIR.
+  mkdir -p "$wd/.tmp"
+  out=$(cd "$wd" && TMPDIR="$wd/.tmp" GD="$GD" bash "$dir/cmd" 2>&1); rc=$?
 
   ok=1
   [ "$rc" = "$expected_rc" ] || ok=0
   if [ -f "$dir/expect" ]; then
     while IFS= read -r pat; do
       [ -z "$pat" ] && continue
-      printf '%s' "$out" | grep -qF -- "$pat" || { ok=0; break; }
+      # Whole-line match, anchored: substring matching let "LINK_CHANGES: 4" be
+      # satisfied by an engine printing "LINK_CHANGES: 4000". A trailing '*'
+      # opts into a prefix match, for messages ending in a resolved path.
+      case "$pat" in
+        *'*')
+          printf '%s\n' "$out" | grep -qF -- "${pat%\*}" || { ok=0; break; } ;;
+        *)
+          printf '%s\n' "$out" | grep -qxF -- "$pat" \
+            || printf '%s\n' "$out" | grep -qxF -- "  $pat" \
+            || { ok=0; break; } ;;
+      esac
     done < "$dir/expect"
   fi
   if [ -f "$dir/refute" ]; then
@@ -79,8 +99,8 @@ run_one() {
 # ------------------------------------------------------------ trip coverage
 trip_coverage() {
   local declared observed missing=""
-  declared=$(grep -oE 'TRIP: [a-z-]+|fatal "[a-z-]+"' "$GD/gdsync" \
-             | sed -E 's/.*TRIP: //; s/fatal "//; s/"//' | sort -u)
+  declared=$(grep -oE "(^|[^A-Za-z_])TRIP: [a-z-]+|fatal \"[a-z-]+\"" "$GD/gdsync" \
+             | sed -E 's/.*TRIP: //; s/.*fatal "//; s/"//' | sort -u)
   observed=$(cat "$CASES"/*/expect 2>/dev/null | grep -oE 'TRIP: [a-z-]+' | sed 's/TRIP: //' | sort -u)
   while IFS= read -r t; do
     [ -z "$t" ] && continue
@@ -98,17 +118,52 @@ EOF
 }
 
 # ------------------------------------------------------------ canary
+# Copy the whole skill directory, not just scripts/. Copying scripts/ alone
+# made the canary VACUOUS: cases that read $GD/../SKILL.md found no such file,
+# so the suite was red for every mutation and the detector always fired. A
+# comment-only mutation was reported as "caught".
+canary_tree() { # canary_tree <dest>
+  local dest="$1" root
+  root=$(cd "$GD/.." && pwd)
+  mkdir -p "$dest"
+  cp -R "$root/scripts" "$dest/scripts"
+  cp -R "$root/tests" "$dest/tests"
+  cp "$root/SKILL.md" "$dest/SKILL.md"
+}
+
 canary() {
   echo "== canary: each mutation must turn the suite RED =="
+
+  # Baseline first. If an UNMUTATED copy is not green, every mutation would be
+  # reported "caught" for the wrong reason and the whole run is meaningless.
+  local base btmp bout
+  btmp=$(mktemp -d); canary_tree "$btmp"
+  bout=$(GD="$btmp/scripts" bash "$btmp/tests/run" --inner 2>&1)
+  if printf '%s\n' "$bout" | grep -q 'FAIL'; then
+    echo "  ABORT: the unmutated baseline is not green, so no mutation result means anything."
+    printf '%s\n' "$bout" | grep 'FAIL' | sed 's/^/    /'
+    rm -rf "$btmp"; return 1
+  fi
+  echo "  baseline green (unmutated copy passes)"
+  rm -rf "$btmp"
+
   local holes=0 n=0
   while IFS=$'\t' read -r file expr; do
     [ -z "${file:-}" ] && continue
     case "$file" in \#*) continue ;; esac
     n=$((n+1))
-    local tmp; tmp=$(mktemp -d)
-    cp -R "$GD" "$tmp/scripts"
+    local tmp; tmp=$(mktemp -d); canary_tree "$tmp"
+    local before after
+    before=$(cksum < "$tmp/scripts/$file")
     sed -i '' -E "$expr" "$tmp/scripts/$file" 2>/dev/null || sed -i -E "$expr" "$tmp/scripts/$file"
-    local o; o=$(GD="$tmp/scripts" bash "$HERE/run" --inner 2>&1)
+    after=$(cksum < "$tmp/scripts/$file")
+    if [ "$before" = "$after" ]; then
+      # A sed expression that matches nothing exits 0, so a typo'd mutation
+      # would silently be a no-op and get counted as caught.
+      echo "  BAD     mutation changed nothing (bad expression): $file  $expr"
+      holes=$((holes+1)); rm -rf "$tmp"; continue
+    fi
+    local o; o=$(GD="$tmp/scripts" bash "$tmp/tests/run" --inner 2>&1)
     if printf '%s' "$o" | grep -q 'FAIL'; then
       echo "  ok      mutation caught: $file  $expr"
     else

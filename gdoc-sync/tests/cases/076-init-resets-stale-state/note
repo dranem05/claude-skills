@@ -1,0 +1,1 @@
+Run dirs keyed on label alone let two documents share one, and init left the previous snapshot in place, so one document's Drive content was written into another and exited zero.

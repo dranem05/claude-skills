@@ -1,0 +1,6 @@
+R=$(bash "$GD/gdsync" init --local local.md --label t071 --mode pull-only --export drive-src.md | sed -n 's/^RUN=//p')
+bash "$GD/gdsync" diff --run "$R" >/dev/null 2>&1 || true
+echo "PHASE2_VERDICT=$(cat "$R/verdict.rc")"
+bash "$GD/gdsync" adopt --run "$R" --from drive2-src.md --as drive2 >/dev/null
+bash "$GD/gdsync" diff --run "$R" --side drive2 >/dev/null 2>&1 || true
+echo "AFTER_PHASE6=$(cat "$R/verdict.rc")"

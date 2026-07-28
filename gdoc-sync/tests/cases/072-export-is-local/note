@@ -1,0 +1,1 @@
+--export consumes its argument via mv, so passing the working copy deleted the user's only copy and init reported success with a byte count.

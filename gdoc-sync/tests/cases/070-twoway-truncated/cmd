@@ -1,0 +1,2 @@
+R=$(bash "$GD/gdsync" init --local local.md --label t070 --mode two-way --export drive-src.md | sed -n 's/^RUN=//p')
+bash "$GD/gdsync" diff --run "$R"

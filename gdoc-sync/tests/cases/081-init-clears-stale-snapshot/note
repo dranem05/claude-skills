@@ -1,0 +1,1 @@
+Re-initialising the same run must clear the previous snapshot; a stale drive.md is silently reused, which both leaks content across runs and makes a broken init look like a working one to this suite.

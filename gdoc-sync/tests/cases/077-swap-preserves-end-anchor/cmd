@@ -1,0 +1,5 @@
+R=$(bash "$GD/gdsync" init --local local.md --label t077 --mode pull-only --export drive-src.md | sed -n 's/^RUN=//p')
+bash "$GD/gdsync" swap --run "$R" --start 'START_X' --end 'END_X' >/dev/null
+grep -qx 'END_X' local.md && echo END_ANCHOR_PRESENT
+grep -qx 'tail line' local.md && echo TAIL_PRESENT
+grep -qx 'NEW body' local.md && echo BODY_REPLACED

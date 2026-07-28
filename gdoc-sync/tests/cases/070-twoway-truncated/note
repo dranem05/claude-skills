@@ -1,0 +1,1 @@
+two-way pulls as well as pushes, so a truncated snapshot must still be fatal there; grouping it with push-only let a snapshot missing most of the document pass as ok.

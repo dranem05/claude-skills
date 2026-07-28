@@ -1,0 +1,1 @@
+Zero occurrences means a stale snapshot and needs a re-pull, but it was merged with the over-match case and told the caller to lengthen the anchor, which makes it strictly worse.

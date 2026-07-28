@@ -1,4 +1,10 @@
 SK="$GD/../SKILL.md"
-n=$(grep -cE '^```(bash|sh|python|zsh)' "$SK" || true)
-echo "EXECUTABLE_FENCES=$n"
-[ "$n" -eq 0 ]
+[ -s "$SK" ] || { echo "NO_SKILL_MD"; exit 1; }
+# Allowlist, not denylist: the refuter slipped ```console, ```Bash and ```{bash}
+# past a four-label check. Only an unlabelled fence is permitted, and its
+# contents must not look like a runnable command line.
+bad=$(grep -nE '^[[:space:]]*```[[:alnum:]{[]' "$SK" || true)
+[ -z "$bad" ] || { echo "LABELLED_FENCE:"; echo "$bad"; exit 1; }
+runnable=$(awk '/^[[:space:]]*```/{f=!f;next} f && /^[[:space:]]*(bash|sh|zsh|python3?|curl|wget|sudo|eval|sed|awk|rm|mv|cp|chmod|git) /{print NR": "$0}' "$SK" || true)
+[ -z "$runnable" ] || { echo "RUNNABLE_LINE_IN_FENCE:"; echo "$runnable"; exit 1; }
+echo "NO_EXECUTABLE_PROSE"

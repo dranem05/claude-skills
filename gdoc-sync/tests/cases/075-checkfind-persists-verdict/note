@@ -1,0 +1,1 @@
+checkfind exited from inside python without recording anything, so a fatal stale-snapshot finding left no on-disk gate and a following swap proceeded as if nothing had happened.

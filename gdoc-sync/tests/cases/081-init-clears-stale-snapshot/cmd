@@ -1,0 +1,5 @@
+R1=$(bash "$GD/gdsync" init --local local.md --label t081 --doc-id DOC1 --mode pull-only --export first-export.md | sed -n 's/^RUN=//p')
+[ -f "$R1/drive.md" ] && echo FIRST_SNAPSHOT_PRESENT
+R2=$(bash "$GD/gdsync" init --local local.md --label t081 --doc-id DOC1 --mode pull-only | sed -n 's/^RUN=//p')
+[ "$R1" = "$R2" ] && echo SAME_RUN_REUSED
+[ -f "$R2/drive.md" ] && echo STALE_KEPT || echo STALE_CLEARED

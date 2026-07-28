@@ -38,7 +38,7 @@ die() { printf '%s\n' "$*" >&2; exit "$E_USAGE"; }
 fatal() {
   printf 'RESULT: fatal\n'; printf 'TRIP: %s\n' "$1"; shift
   if [ -n "${RUN:-}" ] && [ -d "${RUN:-}" ]; then
-    printf '3\n' > "$RUN/verdict.rc"
+    record_verdict 3
     printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" guard "-" fatal >> "$RUN/receipt.tsv"
   fi
   printf '%s\n' "$*" >&2
@@ -65,6 +65,17 @@ load_run() {
 }
 
 receipt() { printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" >> "$RUN/receipt.tsv"; }
+
+# The recorded verdict is MONOTONIC: it may worsen during a run but never
+# improve. Phase 6 re-runs `diff` against drive2, and an unconditional write
+# there would erase a Phase-2 FATAL -- the gate is meant to survive, so a later
+# clean check must not clear an earlier refusal. Severity: 3 > 4 > 0.
+sev() { case "$1" in 3) echo 2 ;; 4) echo 1 ;; *) echo 0 ;; esac; }
+record_verdict() {
+  local new="$1" cur=0
+  [ -f "$RUN/verdict.rc" ] && cur=$(cat "$RUN/verdict.rc" 2>/dev/null || echo 0)
+  if [ "$(sev "$new")" -ge "$(sev "$cur")" ]; then printf '%s\n' "$new" > "$RUN/verdict.rc"; fi
+}
 
 # ---------------------------------------------------------------- normalize
 # Filters Google-export cosmetics so real edits are not buried in noise.
@@ -148,15 +159,28 @@ guards() { # guards <side-file> <side-label>
   fi
   printf 'SHAPE: %s\n' "$shape"
 
+  # Absolute floor before ANY proportion logic. On a short document one ordinary
+  # edit is a huge percentage: a 2-line doc with one changed line is 50%
+  # one-sided and came back FATAL with "re-pull", which can never clear.
+  if [ "$L" -lt 10 ] || { [ "$OL" -lt 4 ] && [ "$OD" -lt 4 ]; }; then
+    printf 'RESULT: ok\nFLOOR: below-proportion-floor\n'
+    return "$E_OK"
+  fi
+
   # One-sidedness, severity by mode. "Local has lines the snapshot lacks" is a
-  # failure signal in pull-only and the PREMISE in push-only, so a mode-blind
+  # failure signal when pulling and the PREMISE when pushing, so a mode-blind
   # threshold makes push-only unusable.
   case "$MODE" in
-    pull-only)
+    pull-only|two-way)
       if [ "$PL" -ge 40 ] && [ "$shape" = "single-hunk-tail" ]; then
         fatal "truncated-snapshot" "$name is missing one contiguous tail block ($OL lines, ${PL}%) — the truncated-export shape. Re-pull."
       elif [ "$PL" -ge 40 ]; then
         fatal "lopsided-pull" "$OL/$L local lines (${PL}%) absent from $name in pull-only — suspect snapshot, not $OL pushes."
+      elif [ "$PD" -ge 40 ] && [ "$MODE" = two-way ]; then
+        printf 'RESULT: confirm\nTRIP: drive-moved-confirm\n'
+        printf '%s/%s %s lines (%s%%) absent from local - reconcile before writing.\n' \
+          "$OD" "$D" "$name" "$PD" >&2
+        return "$E_CONFIRM"
       elif [ "$PL" -ge 15 ]; then
         printf 'RESULT: confirm\nTRIP: lopsided-pull-confirm\n'
         printf '%s/%s local lines (%s%%) absent from %s. Large local edit, or partial export? Ask the user.\n' \
@@ -164,7 +188,7 @@ guards() { # guards <side-file> <side-label>
         return "$E_CONFIRM"
       fi
       ;;
-    push-only|two-way)
+    push-only)
       # Local leading the snapshot is this mode's premise: never fatal on its
       # own. Only surface it for approval when it is large.
       if [ "$PL" -ge 40 ]; then
@@ -212,16 +236,40 @@ cmd_init() {
   # sanitise: a label reaches the filesystem
   label=$(printf '%s' "$label" | tr -c 'A-Za-z0-9._-' '-')
 
-  RUN="${TMPDIR:-/tmp}/gdoc-sync-$label"
+  # Key the run directory on label AND document, not label alone: two different
+  # files both named notes.md otherwise share one run dir and the previous
+  # document's snapshot survives into the next run.
+  local key
+  key=$(printf '%s' "$abs|$docid" | { shasum 2>/dev/null || sha1sum 2>/dev/null || cksum; } | cut -c1-8)
+  RUN="${TMPDIR:-/tmp}/gdoc-sync-$label-$key"
   mkdir -p "$RUN" || { printf 'cannot create run dir: %s\n' "$RUN" >&2; exit "$E_INTERNAL"; }
+  # Absolutize: TMPDIR may be relative or carry a trailing slash, and later
+  # phases receive this path from a possibly different cwd.
+  RUN=$(cd "$RUN" && pwd)
+
+  # Reset any prior run here. Without this a stale drive.md, verdict.rc or
+  # normalised artifact is silently reused - which both leaks one document into
+  # another and lets a broken init look like a working one to the test suite.
+  rm -f "$RUN"/drive.md "$RUN"/drive2.md "$RUN"/verdict.rc "$RUN"/diff.txt \
+        "$RUN"/links.diff "$RUN"/local-n.md "$RUN"/drive-n.md "$RUN"/drive2-n.md \
+        "$RUN"/local-links.tsv "$RUN"/drive-links.tsv "$RUN"/drive2-links.tsv 2>/dev/null
 
   printf 'LOCAL=%s\nLABEL=%s\nMODE=%s\nDOCID=%s\n' "$abs" "$label" "$mode" "$docid" > "$RUN/run.env"
   : > "$RUN/receipt.tsv"
 
   if [ -n "$export_path" ]; then
     [ -f "$export_path" ] || die "init: --export not found: $export_path"
+    # --export CONSUMES its argument. Refuse when it is the working copy: a user
+    # who saves a manual download over the local path would otherwise lose it
+    # while init reported success.
+    local eabs
+    eabs=$(cd "$(dirname "$export_path")" && pwd)/$(basename "$export_path")
+    [ "$eabs" != "$abs" ] || die "init: --export is the same file as --local ($abs); it would be consumed"
     mv "$export_path" "$RUN/drive.md" || exit "$E_INTERNAL"
-    bash "$HERE/strip-base64-images.sh" "$RUN/drive.md" >/dev/null 2>&1 || true
+    if ! bash "$HERE/strip-base64-images.sh" "$RUN/drive.md" >/dev/null 2>&1; then
+      printf 'BASE64_STRIP: failed\n'
+      printf 'warning: base64 strip failed; the snapshot may still carry image payloads\n' >&2
+    fi
     printf 'DRIVE_BYTES: %s\n' "$(wc -c < "$RUN/drive.md" | tr -d ' ')"
   fi
   receipt init "-" ok
@@ -241,8 +289,14 @@ cmd_adopt() { # attach a (second) export to an existing run
   load_run "$run"
   [ -f "$from" ] || die "adopt: --from not found: $from"
   case "$as" in drive|drive2) ;; *) die "adopt: --as must be drive or drive2" ;; esac
+  local fabs
+  fabs=$(cd "$(dirname "$from")" && pwd)/$(basename "$from")
+  [ "$fabs" != "$LOCAL" ] || die "adopt: --from is the working copy ($LOCAL); it would be consumed"
   mv "$from" "$RUN/$as.md" || exit "$E_INTERNAL"
-  bash "$HERE/strip-base64-images.sh" "$RUN/$as.md" >/dev/null 2>&1 || true
+  if ! bash "$HERE/strip-base64-images.sh" "$RUN/$as.md" >/dev/null 2>&1; then
+    printf 'BASE64_STRIP: failed\n'
+    printf 'warning: base64 strip failed on %s\n' "$as" >&2
+  fi
   receipt adopt "$as" ok
   printf 'ADOPTED: %s\nBYTES: %s\n' "$RUN/$as.md" "$(wc -c < "$RUN/$as.md" | tr -d ' ')"
 }
@@ -276,7 +330,7 @@ cmd_diff() {
 
   local rc=0
   guards "$sf" "$side" || rc=$?
-  printf '%s\n' "$rc" > "$RUN/verdict.rc"
+  record_verdict "$rc"
   case "$rc" in
     0) receipt diff "$side" ok ;;
     4) receipt diff "$side" confirm ;;
@@ -329,8 +383,17 @@ drive = open(dp, encoding='utf-8').read()
 # anchors is what actually detects that.
 for label, text in (('DRIVE', drive), ('LOCAL', local)):
     ns, ne = text.count(start), text.count(end)
+    # Absent and over-matching need opposite advice: zero means a stale snapshot
+    # or an anchor copied from the escaped export, where lengthening makes it
+    # worse; two or more means the anchor is too short.
+    if ns == 0 or ne == 0:
+        print('RESULT: fatal'); print('TRIP: anchor-absent')
+        print('%s has %d START and %d END occurrences. The anchor is not in this '
+              'side at all: stale snapshot, or text taken from the escaped '
+              'export. Re-pull; do not lengthen.' % (label, ns, ne), file=sys.stderr)
+        sys.exit(3)
     if ns != 1 or ne != 1:
-        print('RESULT: fatal'); print('TRIP: anchor-not-unique')
+        print('RESULT: confirm'); print('TRIP: anchor-not-unique')
         print('%s has %d START and %d END occurrences; need exactly 1 of each. '
               'Lengthen the anchors.' % (label, ns, ne), file=sys.stderr)
         sys.exit(4)
@@ -353,7 +416,8 @@ PY
   local rc=$?
   case "$rc" in
     0) receipt swap "-" ok ;;
-    4) receipt swap "-" refused ;;
+    3) record_verdict 3; receipt swap "-" fatal ;;
+    4) record_verdict 4; receipt swap "-" refused ;;
     *) receipt swap "-" error ;;
   esac
   return "$rc"
@@ -370,6 +434,9 @@ cmd_checkfind() {
   done
   load_run "$run"
   [ -n "$find_str" ] || die "checkfind: --find required"
+  # Name the missing precondition rather than letting python raise: exit 1 means
+  # "engine bug" to the caller, which a missing snapshot is not.
+  [ -s "$RUN/drive.md" ] || fatal "snapshot-missing" "checkfind: no snapshot in this run; run init --export first"
   FIND="$find_str" SNAP="$RUN/drive.md" "$PY" - <<'PY'
 import os, sys
 find = os.environ['FIND']
@@ -391,6 +458,15 @@ print('RESULT: confirm'); print('TRIP: find-overmatches')
 print('find string occurs %d times: a push would over-match. Lengthen it.' % n, file=sys.stderr)
 sys.exit(4)
 PY
+  local rc=$?
+  # Record on disk, like diff and swap do. Exiting from inside the heredoc left
+  # a fatal stale-snapshot finding with no gate, so a following swap proceeded.
+  case "$rc" in
+    0) receipt checkfind "-" ok ;;
+    3) record_verdict 3; receipt checkfind "-" fatal ;;
+    4) record_verdict 4; receipt checkfind "-" confirm ;;
+  esac
+  return "$rc"
 }
 
 cmd_cleanup() {
@@ -399,9 +475,12 @@ cmd_cleanup() {
     case "$1" in --run) run="${2:-}"; shift 2 ;; *) die "cleanup: unknown argument: $1" ;; esac
   done
   load_run "$run"
-  case "$RUN" in
-    "${TMPDIR:-/tmp}"/gdoc-sync-*) rm -rf "$RUN"; printf 'CLEANED: %s\n' "$RUN" ;;
-    *) die "cleanup: refusing to remove a path outside the run root: $RUN" ;;
+  local root abs_run
+  root=$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd) || die "cleanup: cannot resolve temp root"
+  abs_run=$(cd "$RUN" 2>/dev/null && pwd) || die "cleanup: run dir gone: $RUN"
+  case "$abs_run" in
+    "$root"/gdoc-sync-*) rm -rf "$abs_run"; printf 'CLEANED: %s\n' "$abs_run" ;;
+    *) die "cleanup: refusing to remove a path outside the run root: $abs_run" ;;
   esac
 }
 

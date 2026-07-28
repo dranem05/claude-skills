@@ -1,0 +1,1 @@
+Phase 6 re-runs diff against drive2 and used to overwrite the verdict, so a clean verification silently cleared a Phase-2 refusal and the swap that had been blocked then applied.

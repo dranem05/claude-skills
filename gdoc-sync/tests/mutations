@@ -6,3 +6,13 @@ gdsync	s/exit "\$E_CONFIRM"/exit 0/
 gdsync	s/request access\|you need access/ZZZNOMATCH/
 gdsync	s/E_CONFIRM=4/E_CONFIRM=0/
 gdsync	s/hunks == 1 \&\& last ~ \/d\//hunks == 99/
+gdsync	s/local\[ml.end\(\):\]/local[ml.end()+len(end):]/
+gdsync	s/n = raw if raw else deesc/n = raw/
+gdsync	s/pull-only\|two-way\)/pull-only)/
+gdsync	s/\[ -s "\$side" \]/[ -e "$side" ]/
+gdsync	s/\[ "\$PL" -ge 15 \]/[ "$PL" -ge 1 ]/
+gdsync	s/if ns == 0 or ne == 0:/if False:/
+gdsync	s/rm -f "\$RUN"\/drive.md/rm -f \/dev\/null_x/
+gdsync	s/\[ "\$eabs" != "\$abs" \]/[ 1 = 1 ]/
+gdsync	s/record_verdict "\$rc"/printf "%s\\n" "$rc" > "$RUN\/verdict.rc"/
+gdsync	s/\[ "\$L" -lt 10 \]/[ "$L" -lt 0 ]/

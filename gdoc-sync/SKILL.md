@@ -172,7 +172,7 @@ Two further reasons: harness tool calls do not persist shell state, so multi-pha
 - [ ] **push-only / two-way:** Phase 6 verification ran and its delta was exactly the pushed B-items.
 - [ ] **pull-only:** no MCP write tool was called.
 - [ ] Cleanup ran; the report quotes the verdict verbatim.
-- [ ] **If you edited anything under `scripts/`:** `bash tests/run` printed `0 failed`, `bash tests/run --canary` printed `0 hole(s)`, and you pasted both lines.
+- [ ] **If you edited anything under `scripts/`:** `bash "<skill-base-dir>/tests/run"` printed `0 failed`, `bash "<skill-base-dir>/tests/run" --canary` printed `baseline green` and `0 hole(s)`, and you pasted both lines.
 
 ## Adapters
 

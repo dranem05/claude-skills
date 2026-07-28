@@ -1,0 +1,4 @@
+bash "$GD/gdsync" init --local mine.md --label t072 --mode pull-only --export mine.md
+rc=$?
+[ -f mine.md ] && echo LOCAL_STILL_EXISTS
+exit $rc

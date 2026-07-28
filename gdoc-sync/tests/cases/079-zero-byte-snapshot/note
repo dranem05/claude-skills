@@ -1,0 +1,1 @@
+A snapshot that exists but is zero bytes is the shape of a failed export; an existence test rather than a non-empty test lets it through and every local line then reads as a push to Drive.

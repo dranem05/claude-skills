@@ -1,9 +1,10 @@
 SK="$GD/../SKILL.md"
+[ -s "$SK" ] || { echo "NO_SKILL_MD"; exit 1; }
 real=$(bash "$GD/gdsync" --list | sort)
-used=$(grep -oE 'gdsync" (init|adopt|diff|swap|checkfind|cleanup|selftest|[a-z]+)' "$SK" \
-       | sed -E 's/.*gdsync" //' | sort -u)
-missing=""
-for u in $used; do printf '%s\n' "$real" | grep -qx "$u" || missing="$missing $u"; done
-echo "USED=$(echo $used | tr '\n' ' ')"
-[ -z "$missing" ] || { echo "NOT_A_SUBCOMMAND:$missing"; exit 1; }
-echo SUBCOMMANDS_MATCH
+used=$(grep -oE 'gdsync" [a-z]+' "$SK" | sed -E 's/.*gdsync" //' | sort -u)
+# Must not pass vacuously on an empty or doc-less tree: require that the doc
+# actually names some invocations.
+cnt=$(printf '%s\n' "$used" | grep -c '[a-z]' || true)
+[ "$cnt" -ge 4 ] || { echo "TOO_FEW_INVOCATIONS:$cnt"; exit 1; }
+for u in $used; do printf '%s\n' "$real" | grep -qx "$u" || { echo "NOT_A_SUBCOMMAND:$u"; exit 1; }; done
+echo "SUBCOMMANDS_MATCH cnt=$cnt"

@@ -1,0 +1,1 @@
+The span replacement must stop before the END anchor; an off-by-one that consumes it silently deletes a real heading from the document while the swap reports success.

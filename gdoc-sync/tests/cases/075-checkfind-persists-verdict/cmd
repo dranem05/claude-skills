@@ -1,0 +1,5 @@
+R=$(bash "$GD/gdsync" init --local local.md --label t075 --mode push-only --export drive-src.md | sed -n 's/^RUN=//p')
+bash "$GD/gdsync" diff --run "$R" >/dev/null 2>&1 || true
+bash "$GD/gdsync" checkfind --run "$R" --find 'absent string' >/dev/null 2>&1
+echo "VERDICT_AFTER_CHECKFIND=$(cat "$R/verdict.rc")"
+grep -q checkfind "$R/receipt.tsv" && echo RECEIPT_WRITTEN
