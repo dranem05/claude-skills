@@ -1,0 +1,1 @@
+open(path,'w') truncates at open, so an interrupted or failing swap left the working copy at zero bytes; a 98KB file went to 0 in a deterministic repro. The replacement must be atomic.

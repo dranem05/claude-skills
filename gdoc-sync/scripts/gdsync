@@ -370,7 +370,7 @@ cmd_swap() {
   fi
 
   START="$start" END="$end" LOCALF="$LOCAL" DRIVEF="$RUN/drive.md" "$PY" - <<'PY'
-import os, re, sys
+import os, re, shutil, sys, tempfile
 start = os.environ['START']; end = os.environ['END']
 lp = os.environ['LOCALF']; dp = os.environ['DRIVEF']
 local = open(lp, encoding='utf-8').read()
@@ -409,7 +409,29 @@ if not md or not ml:
 # Replace by span slicing, not str.replace: replace() counts substrings while
 # the guard counted regex spans, which are different denominators.
 out = local[:ml.start()] + md.group(0) + local[ml.end():]
-open(lp, 'w', encoding='utf-8').write(out)
+
+# Atomic replace. open(lp,'w') truncates at open, so an interrupt between open
+# and write leaves the working copy at zero bytes -- the same class fixed in
+# strip-base64-images.sh. Write a sibling temp, copy the mode, then os.replace,
+# which is atomic on POSIX: the original survives any failure before it.
+d = os.path.dirname(os.path.abspath(lp)) or '.'
+fd, tmp = tempfile.mkstemp(dir=d, prefix='.gdsync-swap.')
+try:
+    with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+        fh.write(out)
+        fh.flush()
+        os.fsync(fh.fileno())
+    try:
+        shutil.copymode(lp, tmp)
+    except OSError:
+        pass
+    os.replace(tmp, lp)
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
 print('RESULT: ok')
 print('APPLIED_BYTES: %d' % (ml.end() - ml.start()))
 PY

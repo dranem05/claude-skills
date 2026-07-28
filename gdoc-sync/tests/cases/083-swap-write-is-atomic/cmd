@@ -1,0 +1,11 @@
+# A swap whose END anchor is absent from LOCAL must refuse AFTER the point where
+# a truncating open() would already have emptied the file.
+before=$(wc -c < local.md | tr -d ' ')
+R=$(bash "$GD/gdsync" init --local local.md --label t083 --mode pull-only --export drive-src.md | sed -n 's/^RUN=//p')
+bash "$GD/gdsync" swap --run "$R" --start 'START_X' --end 'END_X' >/dev/null 2>&1
+after=$(wc -c < local.md | tr -d ' ')
+[ "$after" -gt 0 ] && echo LOCAL_NOT_TRUNCATED
+grep -qx 'important line 3000' local.md && echo TAIL_INTACT
+# no stray temp files left behind
+[ -z "$(ls -A .gdsync-swap.* 2>/dev/null)" ] && echo NO_TEMP_LEAK
+echo "GREW_OR_SAME=$([ "$after" -ge "$before" ] && echo yes || echo no)"

@@ -16,3 +16,4 @@ gdsync	s/rm -f "\$RUN"\/drive.md/rm -f \/dev\/null_x/
 gdsync	s/\[ "\$eabs" != "\$abs" \]/[ 1 = 1 ]/
 gdsync	s/record_verdict "\$rc"/printf "%s\\n" "$rc" > "$RUN\/verdict.rc"/
 gdsync	s/\[ "\$L" -lt 10 \]/[ "$L" -lt 0 ]/
+gdsync	s/os.replace\(tmp, lp\)/open(lp,"w",encoding="utf-8").write(out)/
