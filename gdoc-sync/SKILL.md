@@ -91,7 +91,7 @@ The guards are **mode-aware by necessity**: "local has lines the snapshot lacks"
 
 **Do not infer a hunk's direction from the document's overall recency.** This is the error that matters most here, and it has been made: a local copy carrying several obviously newer facts was treated as newer *everywhere*, and a Drive-side correction of a date was pushed back to the stale value. Each side can be authoritative on different facts at the same time — that is the normal shape of a two-way merge, not an anomaly. Classify per hunk, on the merits, and ask.
 
-Two cheap tells worth using while classifying: an **internally inconsistent** line is usually the stale one (a date given as "Thursday 2026-03-06" where that date is a Friday), and a `# <tab name>` line (gotcha 11) is structure that has no local counterpart and should never be pulled.
+Two cheap tells worth using while classifying: an **internally inconsistent** line is usually the stale one (a date given as "Thursday 2026-03-06" where that date is a Friday), and a `# <tab name>` line (gotcha 11) is tab structure, which **is** a pull item — the local file mirrors the document, tabs included.
 
 Surface the classification before applying anything in bulk.
 
@@ -150,6 +150,15 @@ Per-hunk `find_and_replace` is the default because most pushes are a few targete
 
 Read `occurrencesChanged` on every response and treat three outcomes as distinct: **1** is the only success · **>1** means you over-matched, so restore immediately and re-find with more context · **0** means the push silently did nothing, so do *not* report it as pushed. The field is present on the server this was verified against (2026-07-28: `{"success": true, "occurrencesChanged": 1}`). If yours omits it, say so rather than assuming success — it is the only post-write backstop, and a silently-absent field makes the check pass vacuously.
 
+### Line structure is content — mirror it both ways
+
+A line split is not cosmetic noise. If Drive has a break the local copy lacks, pull it; if local has one Drive lacks, push it. Two mechanics to know:
+
+- **The export marks a soft line break (Shift+Enter) with two trailing spaces**, and a hard paragraph break as a blank line. So `foo.  ` followed by `bar` is one paragraph in the document; `foo.` then a blank line then `bar` is two.
+- **A newline in the `replace` string creates a *soft* break, not a paragraph break.** Verified: pushing `Section.\nWhy recorded:` split the line, and the re-export showed `Section.  ` with the soft-break marker. If you need a genuine paragraph boundary, that is not reachable through `find_and_replace` — use the placeholder route below, or have the user press Enter.
+
+Also beware: splitting a line usually means matching text on both sides of the split point, which is exactly where a formatting boundary tends to sit. Apply the marker rule first and decompose, or the split will cost you the formatting.
+
 ### Offer the placeholder route when an edit gets hairy
 
 Two situations do not reward cleverness: inserting a large structured block, and editing a span with many formatting runs. `find_and_replace` cannot insert at all (only replace), and markdown does not render on push, so a pushed block arrives as literal characters.
@@ -205,7 +214,9 @@ Checked against live schemas 2026-07. **Schema-confirmed** means visible in the 
 8. **Tables can't be created via `find_and_replace`** — needs `docs_insert_table_with_data` or a manual paste.
 9. **The content-write tools take no `tabId`** (schema-confirmed for `find_and_replace`, `append_markdown`, `replace_with_markdown`; tab-*metadata* tools like `docs_rename_tab` do take one). So content destined for a specific non-default tab must be pasted by a human. The Phase-1 pull reads all tabs; only writing into a chosen one is blocked.
 10. **`docs_list_tabs` is blind to real tabs** — confirmed, not merely unverified. On a document with three tabs it returned a single entry, `{"tabId": "default", "title": "<document name>"}`. So it cannot be used to enumerate tabs, and no tab-count completeness check is available.
-11. **The export marks each tab with a `# <tab name>` line.** Those lines are *structure*, not content, and a local single-file copy has no counterpart for them — so they will always surface as Drive-only additions. Recognise them and do not "pull" them. They also explain apparent duplication: a tab whose name matches a section heading inside it exports as two consecutive identical `#` lines.
+11. **The export marks each tab with a `# <tab name>` line.** Recognise them, and **pull them** — the local file is a mirror of the document, so the document's tab structure belongs in it. The same goes for a tab whose content duplicates another tab's: if Drive carries it twice, the mirror carries it twice. Do not "clean it up" on the way in; the local copy's job is to reflect what is there, and a duplicate tab is usually a deliberate convenience copy that its owner will resolve on their own schedule.
+
+    These lines also explain apparent duplication in a diff: a tab whose name matches a section heading inside it exports as two consecutive identical `#` lines. That is one tab, not two sections.
 
 ## Keep the local copy on asterisk emphasis
 
