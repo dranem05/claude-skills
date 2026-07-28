@@ -21,7 +21,7 @@ Also needed: `bash`, `awk`, `sed`, `diff`, `python3`. All present on macOS and L
 
 **Required:** **mode** (`pull-only` | `push-only` | `two-way` — ask if not given; default `pull-only` unless the caller has clearly made local edits meant for Drive) · **local** (path to the working copy; may be relative, the engine resolves and verifies it) · **docId** (from `docs.google.com/document/d/<ID>/edit`).
 
-**Optional:** **account** (which connected Google account's tools to use — an adapter that knows this must pass it; asking the user is the fallback for direct invocation, not the mechanism) · **label** (slug for the run directory; defaults to the local basename) · **conventions** (freeform notes from an adapter about doc-specific rules — frozen sections, duplicated subtab headers, per-hunk authority — surfaced at classify time).
+**Optional:** **account** (which connected Google account's tools to use — an adapter that knows this must pass it; asking the user is the fallback for direct invocation, not the mechanism) · **label** (slug for the run directory; defaults to the local basename) · **conventions** (freeform notes from an adapter about doc-specific rules — sections that are authoritative on one side, duplicated subtab headers, per-hunk authority — surfaced at classify time).
 
 ## Modes
 
@@ -155,7 +155,7 @@ Read `occurrencesChanged` on every response and treat three outcomes as distinct
 A line split is not cosmetic noise. If Drive has a break the local copy lacks, pull it; if local has one Drive lacks, push it. Two mechanics to know:
 
 - **The export marks a soft line break (Shift+Enter) with two trailing spaces**, and a hard paragraph break as a blank line. So `foo.  ` followed by `bar` is one paragraph in the document; `foo.` then a blank line then `bar` is two.
-- **A newline in the `replace` string creates a *soft* break, not a paragraph break.** Verified: pushing `Section.\nWhy recorded:` split the line, and the re-export showed `Section.  ` with the soft-break marker. If you need a genuine paragraph boundary, that is not reachable through `find_and_replace` — use the placeholder route below, or have the user press Enter.
+- **A newline in the `replace` string creates a *soft* break, not a paragraph break.** Verified live: a `replace` whose newline fell between two sentences did split the line, but the re-export showed the first sentence's closing word followed by two trailing spaces — the soft-break marker, not a new paragraph. If you need a genuine paragraph boundary, that is not reachable through `find_and_replace` — use the placeholder route below, or have the user press Enter.
 
 Also beware: splitting a line usually means matching text on both sides of the split point, which is exactly where a formatting boundary tends to sit. Apply the marker rule first and decompose, or the split will cost you the formatting.
 
