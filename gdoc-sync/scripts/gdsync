@@ -79,11 +79,18 @@ record_verdict() {
 
 # ---------------------------------------------------------------- normalize
 # Filters Google-export cosmetics so real edits are not buried in noise.
+#
+# Blockquote markers are stripped because the export renders ordinary paragraphs
+# as "> > text" while the local copy holds them plain -- measured on a real
+# 4047-line export, 14 of 16 diff lines were nothing but these markers.
+#
 # Documented blind spots, each pinned by a test: a pure heading-LEVEL change; a
 # hyperlink retarget under unchanged anchor text (covered by the link pass); a
-# table row whose cells are all '-' placeholders.
+# table row whose cells are all '-' placeholders; and a change that consists
+# only of adding or removing blockquote depth.
 normalize() {
   "$SED" -E -e 's/\{#[^}]*\}//g' \
+            -e 's/^[[:space:]]*(>[[:space:]]*)+//' \
             -e 's/\]\((mailto:)?[^)]*\)//g' \
             -e 's/\[//g' \
             -e 's/\*\*//g' \
@@ -143,22 +150,6 @@ guards() { # guards <side-file> <side-label>
   printf 'LOCAL_LINES: %s\nDRIVE_LINES: %s\nONLY_LOCAL: %s\nONLY_DRIVE: %s\nPCT_LOCAL_ONLY: %s\nPCT_DRIVE_ONLY: %s\n' \
     "$L" "$D" "$OL" "$OD" "$PL" "$PD"
 
-  # Shape of the one-sided-local lines: all in ONE hunk running to end-of-file
-  # (the truncated-export signature) versus scattered across hunks (editing).
-  #
-  # This shape does NOT separate the two cases on its own — a local draft
-  # appended at the end of the file produces exactly the same shape as a
-  # truncated snapshot. The suite proved that, so the shape only sharpens the
-  # message inside pull-only, where local carrying a tail Drive lacks is
-  # suspicious to begin with. It is never consulted in the push modes.
-  local shape="none"
-  if [ "$OL" -gt 0 ]; then
-    shape=$("$AWK" '
-      /^[0-9]/ { hunks++; last=$0 }
-      END { if (hunks == 1 && last ~ /d/) print "single-hunk-tail"; else print "scattered" }' "$RUN/diff.txt")
-  fi
-  printf 'SHAPE: %s\n' "$shape"
-
   # Absolute floor before ANY proportion logic. On a short document one ordinary
   # edit is a huge percentage: a 2-line doc with one changed line is 50%
   # one-sided and came back FATAL with "re-pull", which can never clear.
@@ -172,10 +163,8 @@ guards() { # guards <side-file> <side-label>
   # threshold makes push-only unusable.
   case "$MODE" in
     pull-only|two-way)
-      if [ "$PL" -ge 40 ] && [ "$shape" = "single-hunk-tail" ]; then
-        fatal "truncated-snapshot" "$name is missing one contiguous tail block ($OL lines, ${PL}%) — the truncated-export shape. Re-pull."
-      elif [ "$PL" -ge 40 ]; then
-        fatal "lopsided-pull" "$OL/$L local lines (${PL}%) absent from $name in pull-only — suspect snapshot, not $OL pushes."
+      if [ "$PL" -ge 40 ]; then
+        fatal "lopsided-pull" "$OL/$L local lines (${PL}%) absent from $name — suspect snapshot, not $OL pushes. Re-pull."
       elif [ "$PD" -ge 40 ] && [ "$MODE" = two-way ]; then
         printf 'RESULT: confirm\nTRIP: drive-moved-confirm\n'
         printf '%s/%s %s lines (%s%%) absent from local - reconcile before writing.\n' \
@@ -189,9 +178,11 @@ guards() { # guards <side-file> <side-label>
       fi
       ;;
     push-only)
-      # Local leading the snapshot is this mode's premise: never fatal on its
-      # own. Only surface it for approval when it is large.
-      if [ "$PL" -ge 40 ]; then
+      # Local leading the snapshot is this mode's premise, so never fatal on it
+      # alone -- but the confirm threshold now matches pull-only's 15%, because a
+      # realistic 27%-truncated export passed cleanly at the old 40%, and that is
+      # exactly where the over-match corruption path lives.
+      if [ "$PL" -ge 15 ]; then
         printf 'RESULT: confirm\nTRIP: large-push-confirm\n'
         printf '%s/%s local lines (%s%%) are absent from %s — expected in %s, but large enough to confirm before writing.\n' \
           "$OL" "$L" "$PL" "$name" "$MODE" >&2

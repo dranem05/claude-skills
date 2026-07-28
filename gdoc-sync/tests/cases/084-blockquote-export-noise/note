@@ -1,0 +1,1 @@
+Google renders ordinary paragraphs as blockquoted "> > text" in the markdown export while the local copy holds them plain. Measured on a real 4047-line export, 14 of 16 diff lines were nothing but these markers.

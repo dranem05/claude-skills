@@ -5,7 +5,6 @@ gdsync	s/printf "%s\\t%s\\n", anchor, target/printf "%s\n", target/
 gdsync	s/exit "\$E_CONFIRM"/exit 0/
 gdsync	s/request access\|you need access/ZZZNOMATCH/
 gdsync	s/E_CONFIRM=4/E_CONFIRM=0/
-gdsync	s/hunks == 1 \&\& last ~ \/d\//hunks == 99/
 gdsync	s/local\[ml.end\(\):\]/local[ml.end()+len(end):]/
 gdsync	s/n = raw if raw else deesc/n = raw/
 gdsync	s/pull-only\|two-way\)/pull-only)/
@@ -17,3 +16,5 @@ gdsync	s/\[ "\$eabs" != "\$abs" \]/[ 1 = 1 ]/
 gdsync	s/record_verdict "\$rc"/printf "%s\\n" "$rc" > "$RUN\/verdict.rc"/
 gdsync	s/\[ "\$L" -lt 10 \]/[ "$L" -lt 0 ]/
 gdsync	s/os.replace\(tmp, lp\)/open(lp,"w",encoding="utf-8").write(out)/
+gdsync	s/-e .s\/\^\[\[:space:\]\]\*\(>\[\[:space:\]\]\*\)\+\/\/. \\//
+gdsync	s/\[ "\$PL" -ge 15 \]/[ "$PL" -ge 95 ]/

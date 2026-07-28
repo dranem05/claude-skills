@@ -1,2 +1,1 @@
-RESULT: fatal
-TRIP: truncated-snapshot
+TRIP: lopsided-pull

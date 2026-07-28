@@ -79,13 +79,13 @@ Normalizes both sides, diffs them, extracts anchor→target link pairs, and runs
 
 The guards are **mode-aware by necessity**: "local has lines the snapshot lacks" is a failure signal in `pull-only` and the *premise* in `push-only`. A mode-blind threshold makes `push-only` unusable — it reports truncation and prescribes a re-pull that can never clear.
 
-**`LINK_CHANGES` is not cosmetic.** The normalizer deletes URLs to suppress export noise, so a Drive-side retarget under unchanged anchor text never appears in the main diff. Any non-zero `LINK_CHANGES` is a real hunk to classify.
+**`LINK_CHANGES` is not cosmetic** — with one known exception. The normalizer deletes URLs to suppress export noise, so a Drive-side retarget under unchanged anchor text never appears in the main diff; any non-zero `LINK_CHANGES` is a hunk to classify. The exception, measured live: Google **auto-links bare URLs** in the export, so a plain `https://…` in the local copy comes back as `[https://…](https://…)` and shows up here as an added pair whose anchor equals its target. That shape is export noise. A pair whose anchor differs from its target is real.
 
 ### Phase 3 — Classify each hunk (judgment; this is your job, not the engine's)
 
 - **A — Drive-only → merge into local.** Someone edited Drive; local lacks it. Default: pull it in.
 - **B — Local-only → push to Drive.** A local edit not yet on Drive. Default: push.
-- **C — cosmetic export noise → ignore.** Person-chips expanding to full names, `**` bold markers, backslash escapes, mailto wraps, `{#anchor}` tags, `:---` vs `---` separators. The normalizer already removes these, so they should not reach you as hunks at all; if one does, treat it as a real change.
+- **C — cosmetic export noise → ignore.** Person-chips expanding to full names, `**` bold markers, backslash escapes, mailto wraps, `{#anchor}` tags, `:---` vs `---` separators, `> ` blockquote markers wrapped around ordinary paragraphs, and bare URLs auto-linked into `[url](url)` pairs. The normalizer removes all but the last, so they should not reach you as hunks; if one does, treat it as a real change.
 
 **Needs an explicit user decision, never a default:** true conflicts (both sides edited the same span) · a Drive change that reverses a prior local change · Drive deletions · anything from `LINK_CHANGES` · date or label discrepancies with a possible domain reason · anything the caller's `conventions` marks as pinned or authoritative.
 
@@ -113,7 +113,7 @@ Per-hunk `find_and_replace` is the default because most pushes are a few targete
 
 **Always pass `matchCase: true` explicitly, because you want a case-sensitive rewrite** — not because of any particular server default. Stating it as an intent rather than a workaround keeps the instruction correct regardless of what the default is.
 
-Read `occurrencesChanged` on every response and treat three outcomes as distinct: **1** is the only success · **>1** means you over-matched, so restore immediately and re-find with more context · **0** means the push silently did nothing, so do *not* report it as pushed. If the field is absent from the response, say so rather than assuming success.
+Read `occurrencesChanged` on every response and treat three outcomes as distinct: **1** is the only success · **>1** means you over-matched, so restore immediately and re-find with more context · **0** means the push silently did nothing, so do *not* report it as pushed. The field is present on the server this was verified against (2026-07-28: `{"success": true, "occurrencesChanged": 1}`). If yours omits it, say so rather than assuming success — it is the only post-write backstop, and a silently-absent field makes the check pass vacuously.
 
 ### Phase 6 — Verify (required for `push-only` / `two-way`)
 

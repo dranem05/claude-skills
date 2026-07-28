@@ -1,0 +1,3 @@
+R=$(bash "$GD/gdsync" init --local local.md --label t084 --mode pull-only --export drive-src.md | sed -n 's/^RUN=//p')
+bash "$GD/gdsync" diff --run "$R" >/dev/null 2>&1
+echo "DIFF_BYTES=$(wc -c < "$R/diff.txt" | tr -d ' ')"
