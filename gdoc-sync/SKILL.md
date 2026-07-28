@@ -111,6 +111,28 @@ For each B-item, **pre-flight the find string before writing**:
 
 **3** = the string is not in the snapshot (stale snapshot or wrong text — do not push, re-pull). **4** = it occurs more than once and a push would over-match — lengthen it. **0** = exactly one occurrence; proceed.
 
+### The marker rule — the single most useful thing in this document
+
+**A find string must contain no marker the export introduces:** no `**`, no `*`, no table `|`, no leading `>`. Those characters are the export's *rendering* of formatting; the document itself holds formatting runs, table cells and paragraph styles. Marker-free text, by contrast, is byte-identical in the export and in the document.
+
+Everything follows from that. Measured live, 2026-07-28:
+
+| | find string crosses a marker | find string is marker-free |
+| --- | --- | --- |
+| `checkfind` | useless both ways — the marker-bearing form counts 1 and then matches nothing live; the live-accurate form counts 0 and reports a false `find-absent` | **trustworthy** |
+| The push | `occurrencesChanged: 0`, silently — or it matches and **flattens the formatting** in the span | lands, and **keeps the formatting** |
+| Repair needed | read the document JSON, grep for indices, `docs_apply_text_style` | **none** |
+
+**So when an edit crosses a formatting boundary, decompose it** — split at the markers and issue one `find_and_replace` per fragment. Each replacement then lies wholly inside one run and inherits that run's style. Verified: replacing `Recording:` with `Recorded on:` inside a bold run came back **bold**, one call, no repair, neighbouring runs untouched.
+
+`checkfind` enforces this (`TRIP: find-crosses-format-marker`). Pipes get a narrower test, because Google escapes literal `#`, `~`, `+` and `-` but does **not** escape a literal `|` — one line of the corpus this was verified against reads `Export | Archive (1080x1080)` with a genuine pipe. So an unescaped `*` is always a marker, while a `|` is only refused when the line it matches is itself a table row. (That `*` inference rests on the escaping pattern, not on a literal-asterisk sample.)
+
+### Repairing formatting, when decomposition genuinely can't express the edit
+
+An edit that *moves* text across a boundary — pulling a word out of a bold run — cannot be decomposed. Then: push with the live-accurate string, accept the flattening, and restyle. `docs_apply_text_style` and `docs_apply_paragraph_style` (which takes `HEADING_1`…`HEADING_6`) both need raw `startIndex`/`endIndex`, so read `docs_read_document format=json` — it is far too large for context (845 KB on a 660-line doc), but the harness spills it to a file, so `grep` that file for your text and read the enclosing `textRun`'s indices. Verified: restoring bold on a 13-character span took one styling call at indices 396–409.
+
+**Two cautions.** Indices are valid only for the document state you read them from, and *any* intervening edit invalidates them — a stale index silently styles the wrong characters. And the cost is per formatting *run*, not per edit, so a block with a dozen runs means a dozen index lookups. Past one or two runs, prefer the placeholder route below.
+
 **Never build a find string out of a table row.** The export renders a native table as `| a | b |`, but the live document has cells and contains no `|` there — so a piped row pre-flights as unique and then pushes `occurrencesChanged: 0`, silently. Measured live. Target the text of a *single cell* (`Thu 2026-03-05`), which is real text. `checkfind` now refuses this shape (`TRIP: find-spans-table-cells`), but the check is narrow by necessity: a pipe can be genuine body text, so it only fires when the matched line is itself a table row.
 
 **`checkfind` counts occurrences in the snapshot, not in the live document, and that difference has teeth.** If the export dropped a tab whose content duplicates a retained section — an appendix that repeats an earlier section, or a repeated subtab header, is exactly this shape — then a string that is unique *in the snapshot* is not unique *live*, `checkfind` returns `0`, and the push over-matches. `docs_list_tabs` cannot help: verified 2026-07-28, it reports a single `"default"` tab for a document whose export carries many. So:
@@ -127,6 +149,17 @@ Per-hunk `find_and_replace` is the default because most pushes are a few targete
 **Always pass `matchCase: true` explicitly, because you want a case-sensitive rewrite** — not because of any particular server default. Stating it as an intent rather than a workaround keeps the instruction correct regardless of what the default is.
 
 Read `occurrencesChanged` on every response and treat three outcomes as distinct: **1** is the only success · **>1** means you over-matched, so restore immediately and re-find with more context · **0** means the push silently did nothing, so do *not* report it as pushed. The field is present on the server this was verified against (2026-07-28: `{"success": true, "occurrencesChanged": 1}`). If yours omits it, say so rather than assuming success — it is the only post-write backstop, and a silently-absent field makes the check pass vacuously.
+
+### Offer the placeholder route when an edit gets hairy
+
+Two situations do not reward cleverness: inserting a large structured block, and editing a span with many formatting runs. `find_and_replace` cannot insert at all (only replace), and markdown does not render on push, so a pushed block arrives as literal characters.
+
+**Offer the user this instead, before grinding through it:**
+
+1. **A placeholder.** Ask them to type a marker where the content belongs — `<<SYNC-HERE>>` — and replace that. It is unique by construction, needs no anchor hunting, and cannot cross a formatting boundary.
+2. **Literal markdown, deliberately.** Push the block *as markdown source*. It lands as visible characters, which is fine: the user selects it in the Drive UI and pastes-as-markdown, and Google renders the whole thing — headings, tables, bold — in one gesture. Far easier than hand-styling a dozen runs, and easier for them than copying out of a local file and finding the spot themselves.
+
+State the trade plainly and let them choose. Grinding out thirty styling calls with hand-computed indices, when a placeholder plus one paste would do, is the wrong instinct.
 
 ### Phase 6 — Verify (required for `push-only` / `two-way`)
 

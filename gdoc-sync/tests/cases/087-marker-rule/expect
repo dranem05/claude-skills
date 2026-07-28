@@ -1,0 +1,6 @@
+BOLD_MARKER=4
+CROSSING=4
+BLOCKQUOTE=4
+MARKER_FREE=0
+PLAIN=0
+TRIP: find-crosses-format-marker

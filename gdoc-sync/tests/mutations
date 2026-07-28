@@ -19,3 +19,4 @@ gdsync	s/os.replace\(tmp, lp\)/open(lp,"w",encoding="utf-8").write(out)/
 gdsync	s/-e .s\/\^\[\[:space:\]\]\*\(>\[\[:space:\]\]\*\)\+\/\/. \\//
 gdsync	s/\[ "\$PL" -ge 15 \]/[ "$PL" -ge 95 ]/
 gdsync	s/if .|. in find:/if False:/
+gdsync	s/if _re.search/if False and _re.search/

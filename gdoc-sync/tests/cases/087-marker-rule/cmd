@@ -1,0 +1,8 @@
+R=$(bash "$GD/gdsync" init --local local.md --label t087 --mode push-only --export drive-src.md | sed -n 's/^RUN=//p')
+q() { bash "$GD/gdsync" checkfind --run "$R" --find "$1" >/dev/null 2>&1; echo "$2=$?"; }
+q '**Field A:**'                     BOLD_MARKER
+q 'Value one. **Field B:**'   CROSSING
+q '> **Field A:** Value one.'    BLOCKQUOTE
+q 'Value one.'                  MARKER_FREE
+q 'Plain paragraph with no markers' PLAIN
+bash "$GD/gdsync" checkfind --run "$R" --find '**Field A:**' 2>&1 | grep -o 'TRIP: [a-z-]*'

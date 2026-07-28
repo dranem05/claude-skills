@@ -1,0 +1,1 @@
+The export renders formatting as characters the document does not contain, so a find string crossing a marker either matches nothing live or flattens the run it lands in. Marker-free fragments are byte-identical live and keep their formatting, which is why decomposition works.

@@ -454,6 +454,37 @@ cmd_checkfind() {
 import os, sys
 find = os.environ['FIND']
 text = open(os.environ['SNAP'], encoding='utf-8').read()
+# THE MARKER RULE. A find string must contain no marker that the export itself
+# introduces -- '**', '*', a table '|', or a leading blockquote '>'. Those
+# characters are the export's rendering of formatting; the document holds runs,
+# cells and paragraph styles instead. Verified live, both directions:
+#   * a find string taken WITH markers passes a snapshot count and then matches
+#     nothing live (pushes occurrencesChanged: 0, silently);
+#   * a find string that is live-accurate fails the snapshot count as 'absent',
+#     so the caller is told to re-pull for no reason.
+# Marker-free text has neither problem, and a replacement landing wholly inside
+# one run inherits that run's formatting -- so bold stays bold with no repair
+# call. The fix for a boundary-crossing edit is to DECOMPOSE it at the markers
+# and issue one find_and_replace per fragment.
+#
+# Google escapes markdown-significant characters that are literal text (\#, \~,
+# \+, \-), so an UNESCAPED '*' is a marker. A literal '|' is NOT escaped, so
+# pipes need the narrower table-row test below rather than a blanket refusal.
+import re as _re
+if _re.search(r'(?<!\\)\*', find):
+    print('RESULT: confirm'); print('TRIP: find-crosses-format-marker')
+    print("the find string contains '*' or '**', which the export uses to mark a "
+          "bold/italic run boundary -- the document has no such characters. Split "
+          "the edit at the marker and push one fragment per run; each fragment "
+          "then keeps its own formatting automatically.", file=sys.stderr)
+    sys.exit(4)
+if find.lstrip().startswith('>'):
+    print('RESULT: confirm'); print('TRIP: find-crosses-format-marker')
+    print("the find string starts with '>', the export's blockquote marker, which "
+          "is not text in the document. Drop the marker and match the text.",
+          file=sys.stderr)
+    sys.exit(4)
+
 # A find string that spans table cells can never match the live document. The
 # export renders a native Docs table as '| a | b |', but those pipes are the
 # export's rendering -- the document has cells. Verified live: such a string
