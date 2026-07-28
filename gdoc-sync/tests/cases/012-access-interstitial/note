@@ -1,0 +1,1 @@
+A Google "Request access" page is a non-empty body that normalises non-empty, so it passed existence checks and got treated as the document itself.

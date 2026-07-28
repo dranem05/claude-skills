@@ -1,0 +1,4 @@
+printf 'x\n' > seed.md
+R=$(bash "$GD/gdsync" init --local seed.md --label t013 --mode pull-only --export drive-src.md | sed -n 's/^RUN=//p')
+: > seed.md
+bash "$GD/gdsync" diff --run "$R"

@@ -1,0 +1,9 @@
+SK="$GD/../SKILL.md"
+for pair in "3:FATAL" "4:CONFIRM" "2:Usage" "0:OK"; do
+  code="${pair%%:*}"; word="${pair##*:}"
+  grep -qE "^\| \*\*$code\*\* \| (\*\*)?$word" "$SK" || { echo "MISSING_ROW:$code/$word"; exit 1; }
+done
+grep -q 'E_FATAL=3' "$GD/gdsync" || { echo "ENGINE_FATAL_NOT_3"; exit 1; }
+grep -q 'E_CONFIRM=4' "$GD/gdsync" || { echo "ENGINE_CONFIRM_NOT_4"; exit 1; }
+grep -q 'E_USAGE=2' "$GD/gdsync" || { echo "ENGINE_USAGE_NOT_2"; exit 1; }
+echo EXIT_CODES_MATCH

@@ -1,0 +1,1 @@
+Two links swapped between anchors leaves the multiset of targets unchanged, so a sorted uniq-ed link check reported clean while both URLs were wrong. Pairs in document order catch it.

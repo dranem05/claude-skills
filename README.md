@@ -36,4 +36,13 @@ The interesting part: the obvious pull path silently loses data. `docs_read_docu
 
 Any Google account will do — this is not a Workspace feature. It needs two ordinary OAuth scopes, `auth/documents` and `auth/drive`, both grantable on a consumer `@gmail.com` account. (A custom-domain Workspace account is the fussier case: an admin may have to approve the OAuth client first.) Invocation takes named inputs — `mode` (`pull-only` / `push-only` / `two-way`), `local` (path), `docId` — plus optional `account`, `label`, and `conventions`.
 
-Ships `scripts/strip-base64-images.sh`, which the skill invokes by absolute path and which is also usable standalone (`strip-base64-images.sh <file.md | dir>`).
+The whole non-MCP engine lives in `gdoc-sync/scripts/gdsync` — a single entry point with subcommands (`init`, `diff`, `swap`, `checkfind`, `adopt`, `cleanup`) and exit codes keyed to action rather than severity: `3` means stop, `4` means ask the user, and `4` is deliberately not `0` so an ambiguous run cannot be skimmed past. `SKILL.md` carries no executable code at all, only judgment and choreography.
+
+That split is a correctness measure, not tidiness. Shell pasted into an agent harness may not run in the language it was written for — under one common harness the interpreter is zsh with `grep` replaced by a shim that ignores the POSIX `[^]]` bracket idiom, so a link-extraction pattern that works in a file silently matches nothing, exits 0, and reports "no changes." Code in a file gets real bash and real `grep`, and can be tested.
+
+```bash
+bash gdoc-sync/tests/run            # 30 cases; prints "0 failed"
+bash gdoc-sync/tests/run --canary   # mutates the engine, asserts the suite goes red
+```
+
+The suite is built to resist passing vacuously: every case must state the consequence it prevents, a guard counts as covered only if some case actually made it *fire*, and `--canary` reports a "hole" for any deliberate mutation the tests fail to catch. Also ships `scripts/strip-base64-images.sh`, usable standalone (`strip-base64-images.sh <file.md | dir>`).

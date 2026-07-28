@@ -1,0 +1,1 @@
+Half the local lines absent from Drive, scattered rather than a tail block, is still a suspect snapshot in pull-only and must not be read as fifty separate B-items.

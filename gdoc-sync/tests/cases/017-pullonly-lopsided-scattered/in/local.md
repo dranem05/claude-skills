@@ -1,0 +1,40 @@
+shared 1
+LOCAL ONLY 1
+shared 2
+LOCAL ONLY 2
+shared 3
+LOCAL ONLY 3
+shared 4
+LOCAL ONLY 4
+shared 5
+LOCAL ONLY 5
+shared 6
+LOCAL ONLY 6
+shared 7
+LOCAL ONLY 7
+shared 8
+LOCAL ONLY 8
+shared 9
+LOCAL ONLY 9
+shared 10
+LOCAL ONLY 10
+shared 11
+LOCAL ONLY 11
+shared 12
+LOCAL ONLY 12
+shared 13
+LOCAL ONLY 13
+shared 14
+LOCAL ONLY 14
+shared 15
+LOCAL ONLY 15
+shared 16
+LOCAL ONLY 16
+shared 17
+LOCAL ONLY 17
+shared 18
+LOCAL ONLY 18
+shared 19
+LOCAL ONLY 19
+shared 20
+LOCAL ONLY 20

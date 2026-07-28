@@ -1,0 +1,1 @@
+Both anchors present exactly once but in the wrong order yields no span; without this check the search returns None and the code path crashes instead of reporting a usable reason.

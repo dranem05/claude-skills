@@ -1,0 +1,1 @@
+Mode-blind guards reported FATAL truncation in push-only, the one mode where local leads Drive by construction, and prescribed a re-pull that can never clear it. push-only was unusable.

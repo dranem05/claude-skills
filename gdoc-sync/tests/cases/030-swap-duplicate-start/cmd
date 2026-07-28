@@ -1,0 +1,5 @@
+R=$(bash "$GD/gdsync" init --local local.md --label t030 --mode pull-only --export drive-src.md | sed -n 's/^RUN=//p')
+bash "$GD/gdsync" swap --run "$R" --start '# **Section A**' --end '# **Section C**'
+rc=$?
+grep -q 'MUST SURVIVE' local.md && echo PROTECTED_SURVIVED
+exit $rc

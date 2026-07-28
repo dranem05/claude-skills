@@ -1,0 +1,1 @@
+findall with a lookahead returns non-overlapping matches, so a duplicated START with one END collapsed to a single span, the count read 1, the guard passed, and the protected block between them was destroyed.

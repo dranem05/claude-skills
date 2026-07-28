@@ -1,0 +1,1 @@
+In push-only a collaborator having added a lot on the Drive side must be reconciled before writing, or the push silently lands on top of work nobody looked at.

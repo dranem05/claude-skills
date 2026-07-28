@@ -1,0 +1,1 @@
+A truncated export normalises non-empty, so byte-count guards waved it through and every local line classified as a push to Drive from find-strings never read from it.

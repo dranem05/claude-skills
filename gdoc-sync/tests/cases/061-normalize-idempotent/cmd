@@ -1,0 +1,8 @@
+R=$(bash "$GD/gdsync" init --local local.md --label t061 --mode pull-only --export drive-src.md | sed -n 's/^RUN=//p')
+bash "$GD/gdsync" diff --run "$R" >/dev/null
+cp "$R/local-n.md" once.md
+cp once.md fake-local.md
+R2=$(bash "$GD/gdsync" init --local fake-local.md --label t061b --mode pull-only | sed -n 's/^RUN=//p')
+cp once.md "$R2/drive.md"
+bash "$GD/gdsync" diff --run "$R2" >/dev/null
+if diff -q "$R2/local-n.md" once.md >/dev/null; then echo IDEMPOTENT; fi

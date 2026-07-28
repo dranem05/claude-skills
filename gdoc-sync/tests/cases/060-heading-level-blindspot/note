@@ -1,0 +1,1 @@
+Pins a documented blind spot rather than a feature: heading-level-only changes are deliberately invisible. If a future filter edit changes this, the doc claim and the code diverge silently unless a test says so.

@@ -1,0 +1,1 @@
+Code in a markdown fence cannot be executed by any test, which is how a normalizer shipped as invalid bash while labelled validated. This makes the no-code-in-prose rule enforced rather than aspirational.

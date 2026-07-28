@@ -1,0 +1,3 @@
+R=$(bash "$GD/gdsync" init --local local.md --label t032 --mode pull-only --export drive-src.md | sed -n 's/^RUN=//p')
+bash "$GD/gdsync" swap --run "$R" --start '# **Section A**' --end '| Item 2 | 12 min |'
+grep -q NEW local.md && echo APPLIED

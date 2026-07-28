@@ -1,0 +1,1 @@
+Shell state does not survive between harness tool calls, so a lost run directory must fail loudly rather than proceeding against empty state and reporting clean.

@@ -1,0 +1,6 @@
+R=$(bash "$GD/gdsync" init --local local.md --label t033 --mode pull-only --export drive-src.md | sed -n 's/^RUN=//p')
+bash "$GD/gdsync" diff --run "$R" >/dev/null 2>&1 || true
+bash "$GD/gdsync" swap --run "$R" --start 'START_X' --end 'END_X'
+rc=$?
+grep -q old local.md && echo LOCAL_UNTOUCHED
+exit $rc

@@ -1,0 +1,1 @@
+occurrencesChanged was only ever read after the write. A find string absent from the snapshot means a stale snapshot, and the push silently does nothing while being reported as pushed.

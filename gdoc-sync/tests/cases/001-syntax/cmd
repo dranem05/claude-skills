@@ -1,0 +1,1 @@
+bash -n "$GD/gdsync" && bash -n "$GD/strip-base64-images.sh" && echo SYNTAX_OK

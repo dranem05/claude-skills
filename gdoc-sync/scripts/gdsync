@@ -1,0 +1,442 @@
+#!/usr/bin/env bash
+# gdoc-sync engine. Everything in the sync workflow that is not an MCP call
+# lives here, so that it can be executed and tested instead of transcribed.
+#
+# Why a script and not snippets in SKILL.md: an agent pasting shell into the
+# harness runs it under zsh with `grep` replaced by a shell-function shim that
+# does not honour the POSIX `[^]]` idiom — a pattern that works in a file
+# silently matches nothing when pasted. Scripts run under real bash with real
+# grep. This is a correctness difference, not a style preference.
+#
+# Targets bash 3.2 (the /bin/bash macOS ships): no associative arrays, no
+# ${v^^}, no mapfile/readarray.
+#
+# Exit codes are keyed to the action the caller must take:
+#   0  OK       proceed
+#   2  usage    bad arguments / run not initialised
+#   3  FATAL    stop; do not write anything anywhere
+#   4  CONFIRM  ambiguous; ask the user before proceeding (NOT a pass)
+#   1  internal error (a bug in this script)
+
+set -uo pipefail
+
+E_OK=0; E_INTERNAL=1; E_USAGE=2; E_FATAL=3; E_CONFIRM=4
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+GREP=$(command -v grep || echo /usr/bin/grep)
+SED=$(command -v sed   || echo /usr/bin/sed)
+AWK=$(command -v awk   || echo /usr/bin/awk)
+DIFF=$(command -v diff || echo /usr/bin/diff)
+PY=$(command -v python3 || echo /usr/bin/python3)
+
+die() { printf '%s\n' "$*" >&2; exit "$E_USAGE"; }
+
+# Persist the verdict BEFORE exiting. fatal() exits the whole script, so
+# anything written by the caller afterwards never happens — which previously
+# meant a FATAL run left no verdict on disk and a later `swap` had nothing to
+# refuse on. The on-disk verdict is the gate that survives context loss.
+fatal() {
+  printf 'RESULT: fatal\n'; printf 'TRIP: %s\n' "$1"; shift
+  if [ -n "${RUN:-}" ] && [ -d "${RUN:-}" ]; then
+    printf '3\n' > "$RUN/verdict.rc"
+    printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" guard "-" fatal >> "$RUN/receipt.tsv"
+  fi
+  printf '%s\n' "$*" >&2
+  exit "$E_FATAL"
+}
+
+# ---------------------------------------------------------------- run state
+# run.env is parsed, never sourced: no eval, no shell interpretation, so a
+# path containing spaces or quotes cannot become code.
+kv_get() { # kv_get <file> <key>
+  "$AWK" -F'=' -v k="$2" '$1==k {sub(/^[^=]*=/,""); print; exit}' "$1"
+}
+
+load_run() {
+  RUN="$1"
+  [ -n "$RUN" ] || die "missing --run <dir>"
+  [ -f "$RUN/run.env" ] || { printf '%s\n' "run not initialised: $RUN" >&2; exit "$E_USAGE"; }
+  LOCAL=$(kv_get "$RUN/run.env" LOCAL)
+  LABEL=$(kv_get "$RUN/run.env" LABEL)
+  MODE=$(kv_get "$RUN/run.env" MODE)
+  DOCID=$(kv_get "$RUN/run.env" DOCID)
+  DRIVE="$RUN/drive.md"
+  DRIVE2="$RUN/drive2.md"
+}
+
+receipt() { printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" >> "$RUN/receipt.tsv"; }
+
+# ---------------------------------------------------------------- normalize
+# Filters Google-export cosmetics so real edits are not buried in noise.
+# Documented blind spots, each pinned by a test: a pure heading-LEVEL change; a
+# hyperlink retarget under unchanged anchor text (covered by the link pass); a
+# table row whose cells are all '-' placeholders.
+normalize() {
+  "$SED" -E -e 's/\{#[^}]*\}//g' \
+            -e 's/\]\((mailto:)?[^)]*\)//g' \
+            -e 's/\[//g' \
+            -e 's/\*\*//g' \
+            -e 's/^#+[[:space:]]*//' \
+            -e 's/[[:space:]]+$//' \
+            -e 's/^[[:space:]]+//' -- "$1" \
+  | tr -d '\\' \
+  | "$GREP" -vE '^\|?[[:space:]:|-]+\|?$' \
+  | { "$GREP" -v '^[[:space:]]*$' || true; }
+}
+
+# ---------------------------------------------------------------- link pairs
+# awk, not grep: the POSIX `[^]]` bracket idiom is what the harness shim breaks,
+# and awk avoids needing it. Emits anchor<TAB>target in DOCUMENT ORDER and does
+# NOT sort or dedupe — a sorted multiset of targets hides two links swapped
+# between anchors, which is the ordinary form of "fix the wrong link".
+link_pairs() {
+  "$AWK" '
+    {
+      s = $0
+      while (match(s, /\[[^\[]*\]\([^)]*\)/)) {
+        m = substr(s, RSTART, RLENGTH)
+        p = index(m, "](")
+        anchor = substr(m, 2, p - 2)
+        target = substr(m, p + 2, length(m) - p - 2)
+        printf "%s\t%s\n", anchor, target
+        s = substr(s, RSTART + RLENGTH)
+      }
+    }' "$1"
+}
+
+# ---------------------------------------------------------------- guards
+# Mode-aware, because "local has lines Drive lacks" is a FAILURE in pull-only
+# and the PREMISE in push-only. A mode-blind threshold makes push-only
+# unusable: it reports truncation and prescribes a re-pull that can never clear.
+guards() { # guards <side-file> <side-label>
+  local side="$1" name="$2"
+
+  # Tier 1 — structural. Mode-independent, always fatal.
+  [ -s "$LOCAL" ] || fatal "local-missing" "local file missing or empty: $LOCAL"
+  [ -s "$side" ]  || fatal "snapshot-missing" "$name snapshot missing or empty: $side"
+  if "$GREP" -qiE 'request access|you need access|access denied|sign in to continue' "$side"; then
+    fatal "access-interstitial" "$name looks like an access-denied page, not the document"
+  fi
+  [ -s "$RUN/local-n.md" ] || fatal "local-normalised-empty" "local normalised to empty"
+  [ -s "$RUN/$name-n.md" ] || fatal "snapshot-normalised-empty" "$name normalised to empty"
+
+  local L D OL OD PL PD
+  L=$("$GREP" -c '' "$RUN/local-n.md" || true)
+  D=$("$GREP" -c '' "$RUN/$name-n.md" || true)
+  OL=$("$GREP" -c '^<' "$RUN/diff.txt" || true)
+  OD=$("$GREP" -c '^>' "$RUN/diff.txt" || true)
+  PL=0; PD=0
+  [ "$L" -gt 0 ] && PL=$(( OL * 100 / L ))
+  [ "$D" -gt 0 ] && PD=$(( OD * 100 / D ))
+
+  printf 'LOCAL_LINES: %s\nDRIVE_LINES: %s\nONLY_LOCAL: %s\nONLY_DRIVE: %s\nPCT_LOCAL_ONLY: %s\nPCT_DRIVE_ONLY: %s\n' \
+    "$L" "$D" "$OL" "$OD" "$PL" "$PD"
+
+  # Shape of the one-sided-local lines: all in ONE hunk running to end-of-file
+  # (the truncated-export signature) versus scattered across hunks (editing).
+  #
+  # This shape does NOT separate the two cases on its own — a local draft
+  # appended at the end of the file produces exactly the same shape as a
+  # truncated snapshot. The suite proved that, so the shape only sharpens the
+  # message inside pull-only, where local carrying a tail Drive lacks is
+  # suspicious to begin with. It is never consulted in the push modes.
+  local shape="none"
+  if [ "$OL" -gt 0 ]; then
+    shape=$("$AWK" '
+      /^[0-9]/ { hunks++; last=$0 }
+      END { if (hunks == 1 && last ~ /d/) print "single-hunk-tail"; else print "scattered" }' "$RUN/diff.txt")
+  fi
+  printf 'SHAPE: %s\n' "$shape"
+
+  # One-sidedness, severity by mode. "Local has lines the snapshot lacks" is a
+  # failure signal in pull-only and the PREMISE in push-only, so a mode-blind
+  # threshold makes push-only unusable.
+  case "$MODE" in
+    pull-only)
+      if [ "$PL" -ge 40 ] && [ "$shape" = "single-hunk-tail" ]; then
+        fatal "truncated-snapshot" "$name is missing one contiguous tail block ($OL lines, ${PL}%) — the truncated-export shape. Re-pull."
+      elif [ "$PL" -ge 40 ]; then
+        fatal "lopsided-pull" "$OL/$L local lines (${PL}%) absent from $name in pull-only — suspect snapshot, not $OL pushes."
+      elif [ "$PL" -ge 15 ]; then
+        printf 'RESULT: confirm\nTRIP: lopsided-pull-confirm\n'
+        printf '%s/%s local lines (%s%%) absent from %s. Large local edit, or partial export? Ask the user.\n' \
+          "$OL" "$L" "$PL" "$name" >&2
+        return "$E_CONFIRM"
+      fi
+      ;;
+    push-only|two-way)
+      # Local leading the snapshot is this mode's premise: never fatal on its
+      # own. Only surface it for approval when it is large.
+      if [ "$PL" -ge 40 ]; then
+        printf 'RESULT: confirm\nTRIP: large-push-confirm\n'
+        printf '%s/%s local lines (%s%%) are absent from %s — expected in %s, but large enough to confirm before writing.\n' \
+          "$OL" "$L" "$PL" "$name" "$MODE" >&2
+        return "$E_CONFIRM"
+      fi
+      if [ "$PD" -ge 40 ]; then
+        printf 'RESULT: confirm\nTRIP: drive-moved-confirm\n'
+        printf '%s/%s %s lines (%s%%) are absent from local — a collaborator has been busy. Reconcile before writing.\n' \
+          "$OD" "$D" "$name" "$PD" >&2
+        return "$E_CONFIRM"
+      fi
+      ;;
+    *) printf '%s\n' "unknown mode: $MODE" >&2; exit "$E_USAGE" ;;
+  esac
+
+  printf 'RESULT: ok\n'
+  return "$E_OK"
+}
+
+# ---------------------------------------------------------------- subcommands
+cmd_init() {
+  local local_path="" label="" mode="" export_path="" docid=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --local)  local_path="${2:-}"; shift 2 ;;
+      --label)  label="${2:-}"; shift 2 ;;
+      --mode)   mode="${2:-}"; shift 2 ;;
+      --export) export_path="${2:-}"; shift 2 ;;
+      --doc-id) docid="${2:-}"; shift 2 ;;
+      *) die "init: unknown argument: $1" ;;
+    esac
+  done
+  [ -n "$local_path" ] || die "init: --local required"
+  [ -n "$mode" ] || die "init: --mode required (pull-only|push-only|two-way)"
+  case "$mode" in pull-only|push-only|two-way) ;; *) die "init: bad --mode: $mode" ;; esac
+  [ -f "$local_path" ] || die "init: local file not found: $local_path"
+
+  local abs base
+  abs=$(cd "$(dirname "$local_path")" && pwd)/$(basename "$local_path")
+  base=$(basename "$abs"); base="${base%.md}"
+  [ -n "$label" ] || label="$base"
+  # sanitise: a label reaches the filesystem
+  label=$(printf '%s' "$label" | tr -c 'A-Za-z0-9._-' '-')
+
+  RUN="${TMPDIR:-/tmp}/gdoc-sync-$label"
+  mkdir -p "$RUN" || { printf 'cannot create run dir: %s\n' "$RUN" >&2; exit "$E_INTERNAL"; }
+
+  printf 'LOCAL=%s\nLABEL=%s\nMODE=%s\nDOCID=%s\n' "$abs" "$label" "$mode" "$docid" > "$RUN/run.env"
+  : > "$RUN/receipt.tsv"
+
+  if [ -n "$export_path" ]; then
+    [ -f "$export_path" ] || die "init: --export not found: $export_path"
+    mv "$export_path" "$RUN/drive.md" || exit "$E_INTERNAL"
+    bash "$HERE/strip-base64-images.sh" "$RUN/drive.md" >/dev/null 2>&1 || true
+    printf 'DRIVE_BYTES: %s\n' "$(wc -c < "$RUN/drive.md" | tr -d ' ')"
+  fi
+  receipt init "-" ok
+  printf 'RUN=%s\n' "$RUN"
+}
+
+cmd_adopt() { # attach a (second) export to an existing run
+  local run="" from="" as="drive"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --run) run="${2:-}"; shift 2 ;;
+      --from) from="${2:-}"; shift 2 ;;
+      --as) as="${2:-}"; shift 2 ;;
+      *) die "adopt: unknown argument: $1" ;;
+    esac
+  done
+  load_run "$run"
+  [ -f "$from" ] || die "adopt: --from not found: $from"
+  case "$as" in drive|drive2) ;; *) die "adopt: --as must be drive or drive2" ;; esac
+  mv "$from" "$RUN/$as.md" || exit "$E_INTERNAL"
+  bash "$HERE/strip-base64-images.sh" "$RUN/$as.md" >/dev/null 2>&1 || true
+  receipt adopt "$as" ok
+  printf 'ADOPTED: %s\nBYTES: %s\n' "$RUN/$as.md" "$(wc -c < "$RUN/$as.md" | tr -d ' ')"
+}
+
+cmd_diff() {
+  local run="" side="drive"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --run) run="${2:-}"; shift 2 ;;
+      --side) side="${2:-}"; shift 2 ;;
+      *) die "diff: unknown argument: $1" ;;
+    esac
+  done
+  load_run "$run"
+  case "$side" in drive|drive2) ;; *) die "diff: --side must be drive or drive2" ;; esac
+  local sf="$RUN/$side.md"
+
+  normalize "$LOCAL" > "$RUN/local-n.md" 2>/dev/null || true
+  [ -f "$sf" ] && normalize "$sf" > "$RUN/$side-n.md" 2>/dev/null || : > "$RUN/$side-n.md"
+  "$DIFF" "$RUN/local-n.md" "$RUN/$side-n.md" > "$RUN/diff.txt" 2>/dev/null || true
+
+  link_pairs "$LOCAL" > "$RUN/local-links.tsv" 2>/dev/null || true
+  if [ -f "$sf" ]; then link_pairs "$sf" > "$RUN/$side-links.tsv" 2>/dev/null || true
+  else : > "$RUN/$side-links.tsv"; fi
+  "$DIFF" "$RUN/local-links.tsv" "$RUN/$side-links.tsv" > "$RUN/links.diff" 2>/dev/null || true
+  local lc; lc=$("$GREP" -c '^[<>]' "$RUN/links.diff" || true)
+
+  printf 'SIDE: %s\nMODE: %s\n' "$side" "$MODE"
+  printf 'HUNKS: %s\nLINK_CHANGES: %s\n' "$("$GREP" -c '^[0-9]' "$RUN/diff.txt" || true)" "$lc"
+  printf 'DIFF: %s\nLINKS: %s\n' "$RUN/diff.txt" "$RUN/links.diff"
+
+  local rc=0
+  guards "$sf" "$side" || rc=$?
+  printf '%s\n' "$rc" > "$RUN/verdict.rc"
+  case "$rc" in
+    0) receipt diff "$side" ok ;;
+    4) receipt diff "$side" confirm ;;
+    *) receipt diff "$side" fatal ;;
+  esac
+  printf 'RUN=%s\n' "$RUN"
+  return "$rc"
+}
+
+cmd_swap() {
+  local run="" start="" end="" approved=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --run) run="${2:-}"; shift 2 ;;
+      --start) start="${2:-}"; shift 2 ;;
+      --end) end="${2:-}"; shift 2 ;;
+      --approved-by-user) approved=1; shift ;;
+      *) die "swap: unknown argument: $1" ;;
+    esac
+  done
+  load_run "$run"
+  [ -n "$start" ] && [ -n "$end" ] || die "swap: --start and --end required"
+
+  # honour the recorded verdict: never apply on top of a fatal snapshot
+  if [ -f "$RUN/verdict.rc" ]; then
+    local v; v=$(cat "$RUN/verdict.rc")
+    if [ "$v" = "3" ]; then
+      printf 'RESULT: fatal\nTRIP: swap-on-fatal-snapshot\n'
+      printf 'refusing: the snapshot for this run failed its guards\n' >&2
+      exit "$E_FATAL"
+    fi
+    if [ "$v" = "4" ] && [ "$approved" -eq 0 ]; then
+      printf 'RESULT: confirm\nTRIP: swap-needs-approval\n'
+      printf 'refusing: verdict was CONFIRM; re-run with --approved-by-user after asking\n' >&2
+      exit "$E_CONFIRM"
+    fi
+  fi
+
+  START="$start" END="$end" LOCALF="$LOCAL" DRIVEF="$RUN/drive.md" "$PY" - <<'PY'
+import os, re, sys
+start = os.environ['START']; end = os.environ['END']
+lp = os.environ['LOCALF']; dp = os.environ['DRIVEF']
+local = open(lp, encoding='utf-8').read()
+drive = open(dp, encoding='utf-8').read()
+
+# Count the anchors RAW. re.findall with a lookahead returns non-overlapping
+# matches, so a duplicated START with a single END collapses into ONE span that
+# swallows everything between -- the count then reads 1 and the check passes
+# while the replacement destroys every section in between. Counting the raw
+# anchors is what actually detects that.
+for label, text in (('DRIVE', drive), ('LOCAL', local)):
+    ns, ne = text.count(start), text.count(end)
+    if ns != 1 or ne != 1:
+        print('RESULT: fatal'); print('TRIP: anchor-not-unique')
+        print('%s has %d START and %d END occurrences; need exactly 1 of each. '
+              'Lengthen the anchors.' % (label, ns, ne), file=sys.stderr)
+        sys.exit(4)
+
+# Forbid a second START inside the span as well, belt-and-braces.
+pat = re.compile(re.escape(start) + '(?:(?!' + re.escape(start) + ').)*?(?=' + re.escape(end) + ')', re.DOTALL)
+md, ml = pat.search(drive), pat.search(local)
+if not md or not ml:
+    print('RESULT: fatal'); print('TRIP: anchor-span-not-found')
+    print('anchor span not found; check START precedes END', file=sys.stderr)
+    sys.exit(4)
+
+# Replace by span slicing, not str.replace: replace() counts substrings while
+# the guard counted regex spans, which are different denominators.
+out = local[:ml.start()] + md.group(0) + local[ml.end():]
+open(lp, 'w', encoding='utf-8').write(out)
+print('RESULT: ok')
+print('APPLIED_BYTES: %d' % (ml.end() - ml.start()))
+PY
+  local rc=$?
+  case "$rc" in
+    0) receipt swap "-" ok ;;
+    4) receipt swap "-" refused ;;
+    *) receipt swap "-" error ;;
+  esac
+  return "$rc"
+}
+
+cmd_checkfind() {
+  local run="" find_str=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --run) run="${2:-}"; shift 2 ;;
+      --find) find_str="${2:-}"; shift 2 ;;
+      *) die "checkfind: unknown argument: $1" ;;
+    esac
+  done
+  load_run "$run"
+  [ -n "$find_str" ] || die "checkfind: --find required"
+  FIND="$find_str" SNAP="$RUN/drive.md" "$PY" - <<'PY'
+import os, sys
+find = os.environ['FIND']
+text = open(os.environ['SNAP'], encoding='utf-8').read()
+raw = text.count(find)
+# the export carries backslash escapes the live document body does not
+deesc = text.replace('\\', '').count(find)
+print('OCCURRENCES_RAW: %d' % raw)
+print('OCCURRENCES_DEESCAPED: %d' % deesc)
+n = raw if raw else deesc
+if n == 1:
+    print('RESULT: ok'); sys.exit(0)
+if n == 0:
+    print('RESULT: fatal'); print('TRIP: find-absent')
+    print('find string is not in the snapshot: stale snapshot, or wrong text. '
+          'Do NOT push; re-pull.', file=sys.stderr)
+    sys.exit(3)
+print('RESULT: confirm'); print('TRIP: find-overmatches')
+print('find string occurs %d times: a push would over-match. Lengthen it.' % n, file=sys.stderr)
+sys.exit(4)
+PY
+}
+
+cmd_cleanup() {
+  local run=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --run) run="${2:-}"; shift 2 ;; *) die "cleanup: unknown argument: $1" ;; esac
+  done
+  load_run "$run"
+  case "$RUN" in
+    "${TMPDIR:-/tmp}"/gdoc-sync-*) rm -rf "$RUN"; printf 'CLEANED: %s\n' "$RUN" ;;
+    *) die "cleanup: refusing to remove a path outside the run root: $RUN" ;;
+  esac
+}
+
+cmd_selftest() { bash "$HERE/../tests/run" "$@"; }
+
+cmd_list() {
+  printf '%s\n' init adopt diff swap checkfind cleanup selftest
+}
+
+usage() {
+  cat >&2 <<'EOS'
+usage: gdsync <command> [args]
+  init      --local <path> --mode <m> [--label <s>] [--export <f>] [--doc-id <id>]
+  adopt     --run <dir> --from <f> [--as drive|drive2]
+  diff      --run <dir> [--side drive|drive2]
+  swap      --run <dir> --start <text> --end <text> [--approved-by-user]
+  checkfind --run <dir> --find <text>
+  cleanup   --run <dir>
+  selftest
+exit: 0 ok | 2 usage | 3 FATAL stop | 4 CONFIRM ask user | 1 internal
+EOS
+  exit "$E_USAGE"
+}
+
+[ $# -ge 1 ] || usage
+cmd="$1"; shift
+case "$cmd" in
+  init)      cmd_init "$@" ;;
+  adopt)     cmd_adopt "$@" ;;
+  diff)      cmd_diff "$@" ;;
+  swap)      cmd_swap "$@" ;;
+  checkfind) cmd_checkfind "$@" ;;
+  cleanup)   cmd_cleanup "$@" ;;
+  selftest)  cmd_selftest "$@" ;;
+  --list)    cmd_list ;;
+  -h|--help) usage ;;
+  *) die "unknown command: $cmd" ;;
+esac

@@ -1,0 +1,1 @@
+The normalizer deletes URLs to suppress export noise, so a Drive-side link retarget under unchanged anchor text is invisible to the main diff. This pins both halves: main clean, link pass fires.

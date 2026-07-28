@@ -1,0 +1,1 @@
+Prose describing a script's interface is a drift generator: the round-two review found the doc and the code disagreeing about preconditions. This pins every invocation in the doc to a real subcommand.

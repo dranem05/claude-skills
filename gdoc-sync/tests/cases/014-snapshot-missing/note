@@ -1,0 +1,1 @@
+A failed MCP export leaves no snapshot at all; without this the Drive side normalises to empty and every local line classifies as a push to Drive.

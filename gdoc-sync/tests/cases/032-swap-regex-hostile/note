@@ -1,0 +1,1 @@
+Unescaped anchors crashed on the canonical export heading shape with multiple-repeat, and a pipe-table row degenerated into an alternation matching the empty string everywhere.

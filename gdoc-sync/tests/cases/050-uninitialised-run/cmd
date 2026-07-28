@@ -1,0 +1,2 @@
+mkdir -p empty-run
+bash "$GD/gdsync" diff --run empty-run

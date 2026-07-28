@@ -1,0 +1,1 @@
+A filter chain that is not idempotent makes the verification diff in phase six unstable, so a clean re-pull can appear to differ from itself for cosmetic reasons.

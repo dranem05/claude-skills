@@ -1,0 +1,1 @@
+A snapshot that is non-empty on disk but consists only of export cosmetics normalises to nothing, which byte-count guards accept while the diff becomes meaningless.

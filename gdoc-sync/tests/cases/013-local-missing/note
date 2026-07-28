@@ -1,0 +1,1 @@
+If the local working copy is emptied between phases, every Drive line reads as an A-item and a pull would rewrite the file from scratch without anyone noticing.

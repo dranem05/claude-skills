@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# Test runner for gdoc-sync. No framework: bash 3.2, diff, grep, awk only.
+#
+# A case is a directory of data:
+#   cases/<NNN-name>/
+#     cmd      bash to run, with $GD = scripts dir and cwd = a fresh temp copy of in/
+#     rc       expected exit code
+#     note     REQUIRED, >=40 chars, naming the consequence this case prevents
+#     expect   optional: patterns that must ALL appear in stdout+stderr
+#     refute   optional: patterns that must NOT appear
+#     in/      optional fixture files, copied into the temp workdir
+#
+# Three mechanisms keep the suite honest, because a vacuously-passing suite is
+# worse than none:
+#   1. note is mandatory and must state a consequence — kills count-padding cases.
+#   2. TRIP coverage is OBSERVED, not declared: a guard counts as covered only if
+#      some case's expected output actually contains its trip id. A suite that
+#      only exercises happy paths fails.
+#   3. --canary mutates the engine and asserts the suite goes RED. A mutation
+#      that leaves it green is reported as a hole.
+
+set -uo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+# Honour an inherited GD so --canary can point the suite at a mutated copy.
+# Hardcoding this made every mutation "survive": the inner run silently tested
+# the pristine engine and reported green.
+GD="${GD:-$HERE/../scripts}"
+CASES="$HERE/cases"
+ONLY="${2:-}"
+pass=0; fail=0; failed_names=""
+
+run_one() {
+  local dir="$1" name expected_rc note out rc ok
+  name=$(basename "$dir")
+  [ -f "$dir/cmd" ] || { echo "FAIL $name — no cmd file"; fail=$((fail+1)); return; }
+  [ -f "$dir/rc" ]  || { echo "FAIL $name — no rc file"; fail=$((fail+1)); return; }
+  expected_rc=$(tr -d ' \n' < "$dir/rc")
+
+  if [ ! -f "$dir/note" ] || [ "$(wc -c < "$dir/note" | tr -d ' ')" -lt 40 ]; then
+    echo "FAIL $name — note missing or under 40 chars (must state the consequence prevented)"
+    fail=$((fail+1)); return
+  fi
+  note=$(cat "$dir/note")
+
+  local wd; wd=$(mktemp -d)
+  [ -d "$dir/in" ] && cp -R "$dir/in/." "$wd/" 2>/dev/null
+  out=$(cd "$wd" && GD="$GD" bash "$dir/cmd" 2>&1); rc=$?
+
+  ok=1
+  [ "$rc" = "$expected_rc" ] || ok=0
+  if [ -f "$dir/expect" ]; then
+    while IFS= read -r pat; do
+      [ -z "$pat" ] && continue
+      printf '%s' "$out" | grep -qF -- "$pat" || { ok=0; break; }
+    done < "$dir/expect"
+  fi
+  if [ -f "$dir/refute" ]; then
+    while IFS= read -r pat; do
+      [ -z "$pat" ] && continue
+      if printf '%s' "$out" | grep -qF -- "$pat"; then ok=0; break; fi
+    done < "$dir/refute"
+  fi
+
+  if [ "$ok" = 1 ]; then
+    pass=$((pass+1)); [ -n "${VERBOSE:-}" ] && echo "PASS $name"
+    rm -rf "$wd"
+  else
+    fail=$((fail+1)); failed_names="$failed_names $name"
+    echo "FAIL $name"
+    echo "  prevents: $note"
+    echo "  rc:       expected $expected_rc, got $rc"
+    [ -f "$dir/expect" ] && { echo "  expected all of:"; sed 's/^/    /' "$dir/expect"; }
+    [ -f "$dir/refute" ] && { echo "  expected none of:"; sed 's/^/    /' "$dir/refute"; }
+    echo "  actual output:"; printf '%s\n' "$out" | sed 's/^/    /' | head -20
+    echo "  workdir kept: $wd"
+  fi
+}
+
+# ------------------------------------------------------------ trip coverage
+trip_coverage() {
+  local declared observed missing=""
+  declared=$(grep -oE 'TRIP: [a-z-]+|fatal "[a-z-]+"' "$GD/gdsync" \
+             | sed -E 's/.*TRIP: //; s/fatal "//; s/"//' | sort -u)
+  observed=$(cat "$CASES"/*/expect 2>/dev/null | grep -oE 'TRIP: [a-z-]+' | sed 's/TRIP: //' | sort -u)
+  while IFS= read -r t; do
+    [ -z "$t" ] && continue
+    printf '%s\n' "$observed" | grep -qx "$t" || missing="$missing $t"
+  done <<EOF
+$declared
+EOF
+  if [ -n "$missing" ]; then
+    echo "FAIL trip-coverage — guards that no case ever made fire:$missing"
+    echo "  prevents: a suite that only walks happy paths and reports green"
+    fail=$((fail+1))
+  else
+    pass=$((pass+1)); [ -n "${VERBOSE:-}" ] && echo "PASS trip-coverage"
+  fi
+}
+
+# ------------------------------------------------------------ canary
+canary() {
+  echo "== canary: each mutation must turn the suite RED =="
+  local holes=0 n=0
+  while IFS=$'\t' read -r file expr; do
+    [ -z "${file:-}" ] && continue
+    case "$file" in \#*) continue ;; esac
+    n=$((n+1))
+    local tmp; tmp=$(mktemp -d)
+    cp -R "$GD" "$tmp/scripts"
+    sed -i '' -E "$expr" "$tmp/scripts/$file" 2>/dev/null || sed -i -E "$expr" "$tmp/scripts/$file"
+    local o; o=$(GD="$tmp/scripts" bash "$HERE/run" --inner 2>&1)
+    if printf '%s' "$o" | grep -q 'FAIL'; then
+      echo "  ok      mutation caught: $file  $expr"
+    else
+      echo "  HOLE    mutation SURVIVED: $file  $expr"
+      holes=$((holes+1))
+    fi
+    rm -rf "$tmp"
+  done < "$HERE/mutations"
+  echo "  $n mutations, $holes hole(s)"
+  [ "$holes" -eq 0 ] || return 1
+}
+
+# ------------------------------------------------------------ main
+if [ "${1:-}" = "--canary" ]; then canary; exit $?; fi
+
+echo "== gdoc-sync tests =="
+for d in "$CASES"/*/; do
+  [ -d "$d" ] || continue
+  if [ -n "$ONLY" ]; then case "$(basename "$d")" in *$ONLY*) ;; *) continue ;; esac; fi
+  run_one "$d"
+done
+[ -z "$ONLY" ] && trip_coverage
+
+echo "$pass passed, $fail failed"
+[ "$fail" -eq 0 ] || { echo "failed:$failed_names"; exit 1; }
+exit 0

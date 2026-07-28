@@ -1,0 +1,4 @@
+SK="$GD/../SKILL.md"
+n=$(grep -cE '^```(bash|sh|python|zsh)' "$SK" || true)
+echo "EXECUTABLE_FENCES=$n"
+[ "$n" -eq 0 ]

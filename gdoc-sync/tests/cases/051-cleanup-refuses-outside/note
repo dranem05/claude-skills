@@ -1,0 +1,1 @@
+Cleanup used a bare relative glob that resolved against arbitrary cwd; an rm -rf driven by state read off disk must refuse any path outside the run root.

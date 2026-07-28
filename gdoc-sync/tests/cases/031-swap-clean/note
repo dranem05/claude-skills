@@ -1,0 +1,1 @@
+The happy path must actually apply the Drive block and leave surrounding content intact; a swap that refuses everything would pass every negative case.

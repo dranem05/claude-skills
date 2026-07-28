@@ -1,0 +1,1 @@
+A CONFIRM verdict must block the write until approval is explicit, otherwise the ambiguous band silently degrades into a pass and the whole escalation is decorative.

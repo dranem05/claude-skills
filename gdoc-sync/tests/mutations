@@ -1,0 +1,8 @@
+# file	sed -E expression	(each must turn the suite RED)
+gdsync	s/\[ "\$PL" -ge 40 \]/[ "$PL" -ge 999 ]/
+gdsync	s/ns != 1 or ne != 1/False/
+gdsync	s/printf "%s\\t%s\\n", anchor, target/printf "%s\n", target/
+gdsync	s/exit "\$E_CONFIRM"/exit 0/
+gdsync	s/request access\|you need access/ZZZNOMATCH/
+gdsync	s/E_CONFIRM=4/E_CONFIRM=0/
+gdsync	s/hunks == 1 \&\& last ~ \/d\//hunks == 99/

@@ -1,0 +1,3 @@
+mkdir -p danger
+printf 'LOCAL=/etc/passwd\nLABEL=x\nMODE=pull-only\nDOCID=\n' > danger/run.env
+bash "$GD/gdsync" cleanup --run danger

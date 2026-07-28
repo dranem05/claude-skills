@@ -1,0 +1,1 @@
+The verdict is written to disk so it survives context loss; a swap must refuse to apply on top of a snapshot that already failed its guards rather than trusting the caller to remember.

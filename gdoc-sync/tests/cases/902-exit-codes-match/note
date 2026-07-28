@@ -1,0 +1,1 @@
+The doc table telling the agent what each exit code obliges is load-bearing; if the engine renumbers a code and the table does not follow, a CONFIRM silently reads as a pass.
