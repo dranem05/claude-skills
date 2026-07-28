@@ -1,0 +1,10 @@
+R=$(bash "$GD/gdsync" init --local local.md --label t085 --mode push-only --export partial-export.md | sed -n 's/^RUN=//p')
+bash "$GD/gdsync" diff --run "$R" >/dev/null 2>&1
+dv=$?
+# The snapshot shows ONE occurrence; the real document has two.
+bash "$GD/gdsync" checkfind --run "$R" --find 'Sentence present in both copies.' >/dev/null 2>&1
+cf=$?
+echo "SNAPSHOT_OCCURRENCES=$(grep -cF 'Sentence present in both copies.' "$R/drive.md")"
+echo "TRUE_OCCURRENCES=$(grep -cF 'Sentence present in both copies.' local.md)"
+echo "CHECKFIND_RC=$cf"
+echo "GUARD_RC=$dv"

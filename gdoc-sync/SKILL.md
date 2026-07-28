@@ -107,6 +107,12 @@ For each B-item, **pre-flight the find string before writing**:
 
 **3** = the string is not in the snapshot (stale snapshot or wrong text — do not push, re-pull). **4** = it occurs more than once and a push would over-match — lengthen it. **0** = exactly one occurrence; proceed.
 
+**`checkfind` counts occurrences in the snapshot, not in the live document, and that difference has teeth.** If the export dropped a tab whose content duplicates a retained section — an appendix that repeats an earlier section, or a repeated subtab header, is exactly this shape — then a string that is unique *in the snapshot* is not unique *live*, `checkfind` returns `0`, and the push over-matches. `docs_list_tabs` cannot help: verified 2026-07-28, it reports a single `"default"` tab for a document whose export carries many. So:
+
+- Never wave through a Phase-2 `CONFIRM` on a document known to duplicate content by convention. That guard is the only signal that a tab may be missing; case `085` pins the fact that `checkfind` passes this case while the guard flags it.
+- Prefer a find string long enough to include surrounding unique context, rather than the shortest string that happens to be unique in the snapshot.
+- Read `occurrencesChanged` as the ground truth it is: a `>1` here means this happened, and the fix is to restore immediately.
+
 Then issue `docs_find_and_replace` with `documentId=<docId>`, `find` = Drive's **current** text (unescaped — export backslashes don't exist in the live body), `replace` = your target, and **`matchCase: true`**.
 
 Per-hunk `find_and_replace` is the default because most pushes are a few targeted edits, and surgical writes stay recoverable. It is not the only option: when the user wants the document replaced wholesale from local, or the doc is a generated artifact, `docs_replace_with_markdown` is the right call — see gotcha 5 for what it discards, and confirm that intent explicitly first, because it cannot be undone from here.
