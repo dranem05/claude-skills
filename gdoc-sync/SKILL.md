@@ -109,6 +109,8 @@ For each B-item, **pre-flight the find string before writing**:
 
 Then issue `docs_find_and_replace` with `documentId=<docId>`, `find` = Drive's **current** text (unescaped — export backslashes don't exist in the live body), `replace` = your target, and **`matchCase: true`**.
 
+Per-hunk `find_and_replace` is the default because most pushes are a few targeted edits, and surgical writes stay recoverable. It is not the only option: when the user wants the document replaced wholesale from local, or the doc is a generated artifact, `docs_replace_with_markdown` is the right call — see gotcha 5 for what it discards, and confirm that intent explicitly first, because it cannot be undone from here.
+
 **Always pass `matchCase: true` explicitly, because you want a case-sensitive rewrite** — not because of any particular server default. Stating it as an intent rather than a workaround keeps the instruction correct regardless of what the default is.
 
 Read `occurrencesChanged` on every response and treat three outcomes as distinct: **1** is the only success · **>1** means you over-matched, so restore immediately and re-find with more context · **0** means the push silently did nothing, so do *not* report it as pushed. If the field is absent from the response, say so rather than assuming success.
@@ -146,7 +148,7 @@ Checked against live schemas 2026-07. **Schema-confirmed** means visible in the 
 2. **It inherits formatting from the first character of the match** (*observed*). Match starts bold → the whole replacement goes bold. Surface for manual un-bold.
 3. **Cross-paragraph deletes work** (*observed*) — a literal `\n` in the find string spans paragraphs.
 4. **Cross-paragraph replace can drop bold on a trailing label** (*observed*).
-5. **`docs_replace_with_markdown` replaces the *entire body*** (schema-confirmed, from its own description) — destructive to all existing body content. Never use it for a partial update. What survives outside the body (file title, anchored comments) is *unverified*.
+5. **`docs_replace_with_markdown` replaces the *entire body*** (schema-confirmed, from its own description). That makes it the wrong tool for a partial update — but whole-body replacement is a legitimate operation and sometimes the right one: the user asks to overwrite the doc from local, or the doc is a generated artifact whose local copy is authoritative. Use it when that is the actual intent, having first said what it costs — existing body content goes, including native tables and chips, and per gotcha 6 the markdown may land literal. What survives outside the body (file title, anchored comments) is *unverified*. What to avoid is reaching for it as a shortcut for a targeted edit.
 6. **Markdown rendering on push is unresolved.** `docs_replace_with_markdown` / `docs_append_markdown` advertise markdown in their descriptions but were *observed* inserting literal text. Test on a scratch doc before trusting either; until then push plain text via `find_and_replace`.
 7. **`docs_read_document` is lossy and reads one tab per call** — see THE #1 RULE.
 8. **Tables can't be created via `find_and_replace`** — needs `docs_insert_table_with_data` or a manual paste.
