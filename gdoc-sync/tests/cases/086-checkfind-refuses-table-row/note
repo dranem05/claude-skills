@@ -1,0 +1,1 @@
+A find string spanning table cells pre-flighted as unique and then pushed occurrencesChanged 0 silently, because the export's pipes are its rendering of native cells and do not exist in the live document. The check must stay narrow: a pipe can be genuine prose text.

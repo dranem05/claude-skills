@@ -454,6 +454,32 @@ cmd_checkfind() {
 import os, sys
 find = os.environ['FIND']
 text = open(os.environ['SNAP'], encoding='utf-8').read()
+# A find string that spans table cells can never match the live document. The
+# export renders a native Docs table as '| a | b |', but those pipes are the
+# export's rendering -- the document has cells. Verified live: such a string
+# pre-flighted as unique and then pushed occurrencesChanged: 0, silently.
+#
+# The test is deliberately narrow, because a pipe CAN be real body text (one
+# line of the corpus this was verified against reads 'Export | Archive (1080x1080)').
+# So: refuse only when the find string carries a '|' AND the line it matches in
+# the snapshot is itself a table row.
+if '|' in find:
+    spans = False
+    if find.lstrip().startswith('|'):
+        spans = True
+    else:
+        for ln in text.split('\n'):
+            if find in ln and ln.lstrip().startswith('|'):
+                spans = True
+                break
+    if spans:
+        print('RESULT: confirm'); print('TRIP: find-spans-table-cells')
+        print('the find string spans table cells. The pipes exist only in the '
+              'markdown export; the live document has native cells, so this '
+              'push would change nothing and report success. Target the text '
+              'of a single cell instead.', file=sys.stderr)
+        sys.exit(4)
+
 raw = text.count(find)
 # the export carries backslash escapes the live document body does not
 deesc = text.replace('\\', '').count(find)

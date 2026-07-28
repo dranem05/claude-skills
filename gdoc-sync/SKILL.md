@@ -89,6 +89,10 @@ The guards are **mode-aware by necessity**: "local has lines the snapshot lacks"
 
 **Needs an explicit user decision, never a default:** true conflicts (both sides edited the same span) · a Drive change that reverses a prior local change · Drive deletions · anything from `LINK_CHANGES` · date or label discrepancies with a possible domain reason · anything the caller's `conventions` marks as pinned or authoritative.
 
+**Do not infer a hunk's direction from the document's overall recency.** This is the error that matters most here, and it has been made: a local copy carrying several obviously newer facts was treated as newer *everywhere*, and a Drive-side correction of a date was pushed back to the stale value. Each side can be authoritative on different facts at the same time — that is the normal shape of a two-way merge, not an anomaly. Classify per hunk, on the merits, and ask.
+
+Two cheap tells worth using while classifying: an **internally inconsistent** line is usually the stale one (a date given as "Thursday 2026-03-06" where that date is a Friday), and a `# <tab name>` line (gotcha 11) is structure that has no local counterpart and should never be pulled.
+
 Surface the classification before applying anything in bulk.
 
 ### Phase 4 — Apply A-items to local (`pull-only`, `two-way`)
@@ -107,9 +111,12 @@ For each B-item, **pre-flight the find string before writing**:
 
 **3** = the string is not in the snapshot (stale snapshot or wrong text — do not push, re-pull). **4** = it occurs more than once and a push would over-match — lengthen it. **0** = exactly one occurrence; proceed.
 
+**Never build a find string out of a table row.** The export renders a native table as `| a | b |`, but the live document has cells and contains no `|` there — so a piped row pre-flights as unique and then pushes `occurrencesChanged: 0`, silently. Measured live. Target the text of a *single cell* (`Thu 2026-03-05`), which is real text. `checkfind` now refuses this shape (`TRIP: find-spans-table-cells`), but the check is narrow by necessity: a pipe can be genuine body text, so it only fires when the matched line is itself a table row.
+
 **`checkfind` counts occurrences in the snapshot, not in the live document, and that difference has teeth.** If the export dropped a tab whose content duplicates a retained section — an appendix that repeats an earlier section, or a repeated subtab header, is exactly this shape — then a string that is unique *in the snapshot* is not unique *live*, `checkfind` returns `0`, and the push over-matches. `docs_list_tabs` cannot help: verified 2026-07-28, it reports a single `"default"` tab for a document whose export carries many. So:
 
 - Never wave through a Phase-2 `CONFIRM` on a document known to duplicate content by convention. That guard is the only signal that a tab may be missing; case `085` pins the fact that `checkfind` passes this case while the guard flags it.
+- **When an entire section or tab is duplicated, "lengthen the anchor" does not work.** If two copies are byte-identical, no string inside them can be made unique by extending it — verified live on a doc with a tab that duplicates a section of the main tab. The options are to include context from *outside* the duplicated region, or to resolve the duplication first. Saying "lengthen it" in that situation sends the caller in circles.
 - Prefer a find string long enough to include surrounding unique context, rather than the shortest string that happens to be unique in the snapshot.
 - Read `occurrencesChanged` as the ground truth it is: a `>1` here means this happened, and the fix is to restore immediately.
 
@@ -154,15 +161,39 @@ Checked against live schemas 2026-07. **Schema-confirmed** means visible in the 
 2. **It inherits formatting from the first character of the match** (*observed*). Match starts bold → the whole replacement goes bold. Surface for manual un-bold.
 3. **Cross-paragraph deletes work** (*observed*) — a literal `\n` in the find string spans paragraphs.
 4. **Cross-paragraph replace can drop bold on a trailing label** (*observed*).
-5. **`docs_replace_with_markdown` replaces the *entire body*** (schema-confirmed, from its own description). That makes it the wrong tool for a partial update — but whole-body replacement is a legitimate operation and sometimes the right one: the user asks to overwrite the doc from local, or the doc is a generated artifact whose local copy is authoritative. Use it when that is the actual intent, having first said what it costs — existing body content goes, including native tables and chips, and per gotcha 6 the markdown may land literal. What survives outside the body (file title, anchored comments) is *unverified*. What to avoid is reaching for it as a shortcut for a targeted edit.
-6. **Markdown rendering on push is unresolved.** `docs_replace_with_markdown` / `docs_append_markdown` advertise markdown in their descriptions but were *observed* inserting literal text. Test on a scratch doc before trusting either; until then push plain text via `find_and_replace`.
+5. **`docs_replace_with_markdown` does NOT render markdown, and does NOT replace the whole document.** Both halves measured live on a three-tab doc, 2026-07-28:
+   - **Content lands as literal, escaped characters.** A payload of headings, bold, italic, a link, bullets, a numbered list, a blockquote, inline code and a table came back as `\#`, `\*\*bold\*\*`, `\[link\](url)`, `\-`, `1\.`, `\>`, `` \` `` — every construct a character. Its own description says "markdown content"; that description is wrong.
+   - **It replaces only the DEFAULT TAB.** On a three-tab doc it wiped the default tab and left the other two untouched — 660 lines in, 160 surviving. So on any multi-tab doc it produces a half-replaced document.
+   - **Native tables in the replaced tab are destroyed**, converted to literal pipe text that is no longer a table.
+
+   So it is not a whole-document tool and not a markdown tool. Use it only when you want *literal text* in the default tab and have said so. It remains legitimate for that; what it cannot do is the job its name implies.
+6. **`docs_append_markdown` is unverified** and shares gotcha 5's description problem, so assume it also inserts literal text until tested. Push formatting-bearing content via `find_and_replace` against text that already carries the formatting you want.
 7. **`docs_read_document` is lossy and reads one tab per call** — see THE #1 RULE.
 8. **Tables can't be created via `find_and_replace`** — needs `docs_insert_table_with_data` or a manual paste.
 9. **The content-write tools take no `tabId`** (schema-confirmed for `find_and_replace`, `append_markdown`, `replace_with_markdown`; tab-*metadata* tools like `docs_rename_tab` do take one). So content destined for a specific non-default tab must be pasted by a human. The Phase-1 pull reads all tabs; only writing into a chosen one is blocked.
+10. **`docs_list_tabs` is blind to real tabs** — confirmed, not merely unverified. On a document with three tabs it returned a single entry, `{"tabId": "default", "title": "<document name>"}`. So it cannot be used to enumerate tabs, and no tab-count completeness check is available.
+11. **The export marks each tab with a `# <tab name>` line.** Those lines are *structure*, not content, and a local single-file copy has no counterpart for them — so they will always surface as Drive-only additions. Recognise them and do not "pull" them. They also explain apparent duplication: a tab whose name matches a section heading inside it exports as two consecutive identical `#` lines.
+
+## Keep the local copy on asterisk emphasis
+
+Google's export always emits `*italic*`. A local copy written with `_italic_` makes every emphasised line a false hunk: measured on a real 536-line document, converting the local side cut the diff from **55 hunks to 22**. The engine deliberately does *not* normalise this, because stripping `_…_` pairs corrupts query strings — `utm_source=news&utm_medium=` becomes `utmsource=news&utmmedium=`. It is a content convention to hold, not something the tool can fix for you.
 
 ## Normalizer blind spots
 
 Three things the filter chain hides **by design**, each pinned by a test so a future edit can't change them silently: a pure heading-**level** change · a hyperlink retarget under unchanged anchor text (which is why `LINK_CHANGES` exists) · a table row whose cells are all `-` placeholders. Full notes in the header comment of `scripts/gdsync`. If document structure or link integrity is in scope, also read the raw un-normalized diff.
+
+## This skill is a workaround layer — delete parts of it as the MCP improves
+
+Most of what is above exists because the Google Docs MCP tools cannot yet do something directly. When a server gains the missing capability, the corresponding workaround should be **removed**, not kept around for safety. The map, so a future reader knows what to delete:
+
+| If the server gains… | Then delete… |
+| --- | --- |
+| A faithful markdown *render* on push (a real Drive import, or markdown→`batchUpdate`) | Gotchas 5 and 6, and Phase 5's plain-text-only constraint |
+| `tabId` on the content-write tools | Gotcha 9 and the "a human must paste it" limitation |
+| A working `docs_list_tabs` | Gotchas 10 and 11, and the untestable partial-export gap (case `085`) |
+| Table-cell addressing on writes | `checkfind`'s table-row refusal and Phase 5's cell-targeting rule |
+| An occurrence count *before* writing | Most of `checkfind` |
+| A fixed, non-lossy `docs_read_document` | Nothing — the native export is still at least as good, so THE #1 RULE stands on its own |
 
 ## Why the engine is a script
 

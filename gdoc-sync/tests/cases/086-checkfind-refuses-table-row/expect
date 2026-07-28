@@ -1,0 +1,5 @@
+ROW_RC=4
+SPAN_RC=4
+CELL_RC=0
+PROSE_PIPE_RC=0
+TRIP: find-spans-table-cells

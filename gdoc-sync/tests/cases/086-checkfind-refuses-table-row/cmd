@@ -1,0 +1,14 @@
+R=$(bash "$GD/gdsync" init --local local.md --label t086 --mode push-only --export drive-src.md | sed -n 's/^RUN=//p')
+# 1. a full piped row must be refused
+bash "$GD/gdsync" checkfind --run "$R" --find '| Thu 2026-03-05 | Milestone one |' >/dev/null 2>&1
+echo "ROW_RC=$?"
+# 2. cell text spanning two cells (no leading pipe) must also be refused
+bash "$GD/gdsync" checkfind --run "$R" --find 'Thu 2026-03-05 | Milestone one' >/dev/null 2>&1
+echo "SPAN_RC=$?"
+# 3. a single cell's text must PASS
+bash "$GD/gdsync" checkfind --run "$R" --find 'Thu 2026-03-05' >/dev/null 2>&1
+echo "CELL_RC=$?"
+# 4. a genuine inline pipe in prose must PASS (it is real text in the document)
+bash "$GD/gdsync" checkfind --run "$R" --find 'Export | Archive (1080x1080)' >/dev/null 2>&1
+echo "PROSE_PIPE_RC=$?"
+bash "$GD/gdsync" checkfind --run "$R" --find '| Thu 2026-03-05 | Milestone one |' 2>&1 | grep -o 'TRIP: [a-z-]*'
