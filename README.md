@@ -8,8 +8,11 @@ Clone this repo somewhere stable (local disk, not cloud-synced storage — symli
 
 ```bash
 git clone https://github.com/dranem05/claude-skills.git ~/claude-skills
-ln -s ~/claude-skills/airdrop ~/.claude/skills/airdrop
+ln -s ~/claude-skills/airdrop   ~/.claude/skills/airdrop
+ln -s ~/claude-skills/gdoc-sync ~/.claude/skills/gdoc-sync
 ```
+
+**If a skill directory of that name already exists, remove it first.** `ln -s` against an existing *directory* silently creates a symlink *inside* it (`~/.claude/skills/gdoc-sync/gdoc-sync`) and exits 0 — nothing is installed, and the old copy keeps loading. Check with `ls -l ~/.claude/skills/`: an installed skill shows as `name -> /path/to/repo/name`.
 
 Skills load at session start; the skill is available as a slash command (e.g. `/airdrop`) in every Claude Code session from the next session on. Update with `git pull` — changes take effect at the next session start.
 
@@ -22,3 +25,15 @@ Send file(s) to a nearby Apple device via AirDrop from the terminal — opens th
 The interesting part: macOS's `NSSharingServiceDelegate` is blind to cancel-vs-sent (`didShareItems` fires identically for both), so the helper snapshots a `sharingd` preference key that advances only when a transfer actually starts, and degrades to an honest `CLOSED` verdict when the key is unavailable. Details in `airdrop/SKILL.md`.
 
 Works from any cwd; the only human steps are the ones macOS keeps human by design (picking the receiving device, and the Accept prompt on a different-Apple-ID receiver).
+
+### gdoc-sync
+
+Reconcile a single Google Doc with a local markdown working copy — `pull-only`, `push-only`, or a `two-way` merge, with Drive treated as head. Takes an explicit local path plus a Drive doc ID, so it's document-agnostic; a domain-specific caller can resolve its own identifiers and delegate the mechanics here.
+
+The interesting part: the obvious pull path silently loses data. `docs_read_document` drops **every table**, blanks person-chips, and reads only one tab per call — it accepts a `tabId`, but omit it and you silently get just the default tab, so a multi-tab doc comes back quietly incomplete. The skill pulls via `drive_download_file`'s native `files.export` instead, which is faithful on all three counts and returns every tab in one call, and diffs through a normalizer tuned to swallow Google's export cosmetics (heading anchors, backslash escapes, emphasis markers, table separators) so real edits aren't buried in noise. Pushes go through surgical `docs_find_and_replace` calls that verify `occurrencesChanged` per edit. Details in `gdoc-sync/SKILL.md`.
+
+**External dependency — unlike `airdrop`, this skill is not self-sufficient.** It needs an MCP server in your session that can reach Google Docs and Drive, exposing `drive_download_file` (for the pull) and `docs_find_and_replace` (only for pushes). Those exact tool names are a per-server convention rather than a standard, so the skill confirms they exist up front and stops rather than falling back to the lossy path.
+
+Any Google account will do — this is not a Workspace feature. It needs two ordinary OAuth scopes, `auth/documents` and `auth/drive`, both grantable on a consumer `@gmail.com` account. (A custom-domain Workspace account is the fussier case: an admin may have to approve the OAuth client first.) Invocation takes named inputs — `mode` (`pull-only` / `push-only` / `two-way`), `local` (path), `docId` — plus optional `account`, `label`, and `conventions`.
+
+Ships `scripts/strip-base64-images.sh`, which the skill invokes by absolute path and which is also usable standalone (`strip-base64-images.sh <file.md | dir>`).
