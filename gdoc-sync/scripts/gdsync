@@ -518,7 +518,7 @@ if '|' in find:
 # was built for this (TRIP find-replaces-whole-cell) and REVERTED 2026-07-28:
 # a single-line cell is indistinguishable from a flattened multi-line one in
 # the export, so the check had to fire on every whole-cell find. Measured on
-# two real documents, the median cell is 12 characters and that document had 1 cell
+# two real documents, the median cell is 12 characters and one had 1 cell
 # over 120 chars out of 128 -- roughly 1% precision. It also turned pushes
 # that had already been verified against production into refusals. A gate
 # that stops the operator ~127 times out of 128 gets waved through on the
