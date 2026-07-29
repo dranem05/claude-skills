@@ -56,6 +56,8 @@ Every `gdsync` command uses these. They key to **action**, not severity.
 
 A `3` or `4` is also written to `<run>/verdict.rc`, so the gate survives losing your context, and `gdsync swap` refuses on its own if the recorded verdict was FATAL.
 
+**`verdict.rc` is monotonic, so probe gates in a throwaway run.** A `4` you induced deliberately stays on the run, so the next good command refuses with `swap-needs-approval` — and the obvious move is then to wave through an approval you manufactured yourself.
+
 ## Process
 
 Substitute `<skill-base-dir>` with the absolute base directory shown for this skill at invocation. Never a cwd-relative path.
@@ -134,6 +136,8 @@ An edit that *moves* text across a boundary — pulling a word out of a bold run
 **Two cautions.** Indices are valid only for the document state you read them from, and *any* intervening edit invalidates them — a stale index silently styles the wrong characters. And the cost is per formatting *run*, not per edit, so a block with a dozen runs means a dozen index lookups. Past one or two runs, prefer the placeholder route below.
 
 **Never build a find string out of a table row.** The export renders a native table as `| a | b |`, but the live document has cells and contains no `|` there — so a piped row pre-flights as unique and then pushes `occurrencesChanged: 0`, silently. Measured live. Target the text of a *single cell* (`Thu 2026-03-05`), which is real text. `checkfind` now refuses this shape (`TRIP: find-spans-table-cells`), but the check is narrow by necessity: a pipe can be genuine body text, so it only fires when the matched line is itself a table row.
+
+**The export flattens line breaks inside a cell.** A ten-item list in a cell exports as one space-joined line, the local mirror matches, and the diff shows **no hunk**. Replace the whole cell from that single line and the list collapses — and the re-export flattens the damage identically, so Phase 6 can't see it. The only corruption here that can't be caught after the fact. Read the cell with `docs_get_table` before replacing the whole of it; editing *within* one line is always safe. Why there's no guard: `FINDINGS.md`.
 
 **`checkfind` counts occurrences in the snapshot, not in the live document, and that difference has teeth.** If the export dropped a tab whose content duplicates a retained section — an appendix that repeats an earlier section, or a repeated subtab header, is exactly this shape — then a string that is unique *in the snapshot* is not unique *live*, `checkfind` returns `0`, and the push over-matches. `docs_list_tabs` cannot help: verified 2026-07-28, it reports a single `"default"` tab for a document whose export carries many. So:
 
@@ -222,9 +226,19 @@ Checked against live schemas 2026-07. **Schema-confirmed** means visible in the 
 
 Google's export always emits `*italic*`. A local copy written with `_italic_` makes every emphasised line a false hunk: measured on a real 536-line document, converting the local side cut the diff from **55 hunks to 22**. The engine deliberately does *not* normalise this, because stripping `_…_` pairs corrupts query strings — `utm_source=news&utm_medium=` becomes `utmsource=news&utmmedium=`. It is a content convention to hold, not something the tool can fix for you.
 
+Reproduced on a second document: **54 → 21** over 74 spans. If you convert, use a word-boundary match and assert counts first — every `utm_*` param and underscore-delimited filename unchanged, abort on mismatch. A line carrying both emphasis and an underscore filename can't be auto-converted; the span can't cross the underscores.
+
 ## Normalizer blind spots
 
 Three things the filter chain hides **by design**, each pinned by a test so a future edit can't change them silently: a pure heading-**level** change · a hyperlink retarget under unchanged anchor text (which is why `LINK_CHANGES` exists) · a table row whose cells are all `-` placeholders. Full notes in the header comment of `scripts/gdsync`. If document structure or link integrity is in scope, also read the raw un-normalized diff.
+
+A fourth is an export artifact, not a filter one, and worse because it's invisible on both sides: **line breaks inside a table cell** — see above.
+
+## Comments survive surgical pushes
+
+Measured: ten `find_and_replace` writes on a document with ten unresolved threads — one of them rewriting text *inside* a commented range — left all ten intact, same ids and state. Don't replace a whole commented block; adjacent and in-line edits need nothing special. Inventory with `docs_list_comments` before and after.
+
+Two traps: `quotedFileContent` is frozen at creation, so it reads stale after an in-range edit — metadata, not damage. And whether the margin anchor still renders isn't observable through the API; only a human can confirm.
 
 ## This skill is a workaround layer — delete parts of it as the MCP improves
 
@@ -235,6 +249,8 @@ Most of what is above exists because the Google Docs MCP tools cannot yet do som
 | A faithful markdown *render* on push (a real Drive import, or markdown→`batchUpdate`) | Gotchas 5 and 6, and Phase 5's plain-text-only constraint |
 | `tabId` on the content-write tools | Gotcha 9 and the "a human must paste it" limitation |
 | A working `docs_list_tabs` | Gotchas 10 and 11, and the untestable partial-export gap (case `085`) |
+| A cell read preserving intra-cell line breaks, or line-addressed writes | The intra-cell-flattening warning — and what would make a guard for it worth building |
+| Comment-aware writes, or an anchor-integrity signal | The comment-inventory advice |
 | Table-cell addressing on writes | `checkfind`'s table-row refusal and Phase 5's cell-targeting rule |
 | An occurrence count *before* writing | Most of `checkfind` |
 | A fixed, non-lossy `docs_read_document` | Nothing — the native export is still at least as good, so THE #1 RULE stands on its own |
