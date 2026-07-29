@@ -9,7 +9,12 @@ echo "SUBSTRING_RC=$?"
 #    guard wrongly treated it as a cell this would be 4 rather than 0.
 bash "$GD/gdsync" checkfind --run "$R" --find ':--:' >/dev/null 2>&1
 echo "SEPARATOR_RC=$?"
-# 4. prose that is not a table cell at all must PASS
+# 4. an ESCAPED cell, typed the way the LIVE document reads it (no backslash).
+#    The export invents the escape, so a raw-only compare would miss this and
+#    the occurrence counter below would then match it de-escaped anyway.
+bash "$GD/gdsync" checkfind --run "$R" --find '~Mar 5 to 11' >/dev/null 2>&1
+echo "ESCAPED_CELL_RC=$?"
+# 5. prose that is not a table cell at all must PASS
 bash "$GD/gdsync" checkfind --run "$R" --find 'Some prose line here.' >/dev/null 2>&1
 echo "PROSE_RC=$?"
 bash "$GD/gdsync" checkfind --run "$R" --find 'Prepare draft Review copy Ship it' 2>&1 | grep -o 'TRIP: [a-z-]*'

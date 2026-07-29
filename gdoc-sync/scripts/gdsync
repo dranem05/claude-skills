@@ -531,7 +531,17 @@ if '|' in find:
 #
 # Editing text WITHIN one line of a multi-line cell is safe. Only a whole-cell
 # replace destroys structure, so that is exactly what this matches.
+#
+# Compare ESCAPE-INSENSITIVELY, both directions. The export escapes '#', '~',
+# '+' and '-' that the document does not contain, so the cell reads
+# '\~Mar 3 - 20' in the snapshot while the operator, reading the live
+# document, quite correctly types '~Mar 3 - 20'. A raw-only comparison misses
+# that -- and the occurrence counter below then matches it anyway on its
+# de-escaped pass, so the whole-cell replace proceeds UNGUARDED. Found by
+# running this check against a real export; the hand-written fixtures had no
+# escapes in them and could not have caught it.
 _needle = find.strip()
+_needle_forms = {_needle, _needle.replace('\\', '')}
 if _needle:
     for _ln in text.split('\n'):
         _s = _ln.strip()
@@ -541,7 +551,8 @@ if _needle:
         # a separator row (---, :---, :---:) is layout, not content
         if _cells and all(_re.fullmatch(r':?-{2,}:?', c) for c in _cells if c):
             continue
-        if _needle in _cells:
+        _cell_forms = set(_cells) | {c.replace('\\', '') for c in _cells}
+        if _needle_forms & _cell_forms:
             print('RESULT: confirm'); print('TRIP: find-replaces-whole-cell')
             print('the find string is the ENTIRE text of a table cell. The '
                   'export flattens line breaks inside a cell, so a cell that '

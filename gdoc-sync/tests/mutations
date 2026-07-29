@@ -20,5 +20,6 @@ gdsync	s/-e .s\/\^\[\[:space:\]\]\*\(>\[\[:space:\]\]\*\)\+\/\/. \\//
 gdsync	s/\[ "\$PL" -ge 15 \]/[ "$PL" -ge 95 ]/
 gdsync	s/if .|. in find:/if False:/
 gdsync	s/if _re.search/if False and _re.search/
-gdsync	s/if _needle in _cells:/if False:/
+gdsync	s/if _needle_forms & _cell_forms:/if False:/
 gdsync	s/if _cells and all\(_re.fullmatch/if False and all(_re.fullmatch/
+gdsync	s/\{c\.replace\('\\\\', ''\) for c in _cells\}/set()/
