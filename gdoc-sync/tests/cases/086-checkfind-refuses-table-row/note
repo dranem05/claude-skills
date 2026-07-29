@@ -1,3 +1,1 @@
 A find string spanning table cells pre-flighted as unique and then pushed occurrencesChanged 0 silently, because the export's pipes are its rendering of native cells and do not exist in the live document. The check must stay narrow: a pipe can be genuine prose text.
-
-Step 3 targets a substring within a cell, not the whole cell: as of the intra-cell-flattening guard a whole-cell find is a confirm, so the remedy this case advertises has to be the substring form or the operator is refused twice.

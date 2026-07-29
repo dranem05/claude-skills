@@ -507,62 +507,24 @@ if '|' in find:
         print('RESULT: confirm'); print('TRIP: find-spans-table-cells')
         print('the find string spans table cells. The pipes exist only in the '
               'markdown export; the live document has native cells, so this '
-              'push would change nothing and report success. Target a '
-              'substring WITHIN a single cell instead -- not the whole cell, '
-              'which trips find-replaces-whole-cell for a separate reason.',
-              file=sys.stderr)
+              'push would change nothing and report success. Target the text '
+              'of a single cell instead.', file=sys.stderr)
         sys.exit(4)
 
-# The export is faithful about table STRUCTURE but not about line breaks
-# INSIDE a cell. Measured live: a cell holding a ten-item list exports as one
-# space-joined line, and a local mirror written from that export matches it --
-# so the diff reports no hunk, and both sides look identical while they are
-# not. Replacing the whole cell from that single-line source collapses the
-# list to one line, and the post-push re-export flattens the damage
-# identically, so the verify step cannot see it either. It is the one
-# corruption this engine cannot detect after the fact, which is why it is
-# refused before the fact.
-#
-# A single-line cell and a flattened multi-line cell are indistinguishable in
-# the export, so this cannot be narrowed by inspecting the text: inferring
-# from length or word count would be guessing. Hence CONFIRM, not FATAL --
-# replacing a genuinely single-line cell is legitimate, and the operator
-# settles it by reading the live cell with docs_get_table.
-#
-# Editing text WITHIN one line of a multi-line cell is safe. Only a whole-cell
-# replace destroys structure, so that is exactly what this matches.
-#
-# Compare ESCAPE-INSENSITIVELY, both directions. The export escapes '#', '~',
-# '+' and '-' that the document does not contain, so the cell reads
-# '\~Mar 3 - 20' in the snapshot while the operator, reading the live
-# document, quite correctly types '~Mar 3 - 20'. A raw-only comparison misses
-# that -- and the occurrence counter below then matches it anyway on its
-# de-escaped pass, so the whole-cell replace proceeds UNGUARDED. Found by
-# running this check against a real export; the hand-written fixtures had no
-# escapes in them and could not have caught it.
-_needle = find.strip()
-_needle_forms = {_needle, _needle.replace('\\', '')}
-if _needle:
-    for _ln in text.split('\n'):
-        _s = _ln.strip()
-        if not (_s.startswith('|') and _s.endswith('|') and len(_s) > 1):
-            continue
-        _cells = [c.strip() for c in _s[1:-1].split('|')]
-        # a separator row (---, :---, :---:) is layout, not content
-        if _cells and all(_re.fullmatch(r':?-{2,}:?', c) for c in _cells if c):
-            continue
-        _cell_forms = set(_cells) | {c.replace('\\', '') for c in _cells}
-        if _needle_forms & _cell_forms:
-            print('RESULT: confirm'); print('TRIP: find-replaces-whole-cell')
-            print('the find string is the ENTIRE text of a table cell. The '
-                  'export flattens line breaks inside a cell, so a cell that '
-                  'reads as one line here may be a multi-line list live; '
-                  'replacing the whole of it would collapse that list, and '
-                  'the re-export would hide the damage. Read the cell with '
-                  'docs_get_table and confirm it is genuinely single-line, or '
-                  'target a substring within the cell instead.',
-                  file=sys.stderr)
-            sys.exit(4)
+# NOT GUARDED HERE, deliberately -- see "The export flattens line breaks
+# inside a cell" in SKILL.md. Replacing the whole of a multi-line cell from a
+# single-line local source destroys the list, and the post-push re-export
+# flattens the damage identically so the verify step cannot see it. A guard
+# was built for this (TRIP find-replaces-whole-cell) and REVERTED 2026-07-28:
+# a single-line cell is indistinguishable from a flattened multi-line one in
+# the export, so the check had to fire on every whole-cell find. Measured on
+# two real documents, the median cell is 12 characters and that document had 1 cell
+# over 120 chars out of 128 -- roughly 1% precision. It also turned pushes
+# that had already been verified against production into refusals. A gate
+# that stops the operator ~127 times out of 128 gets waved through on the
+# one that matters. The hazard is real; enforcement here is not the answer.
+# It stays a judgement call in SKILL.md until a signal exists that does not
+# require inferring cell shape from text.
 
 raw = text.count(find)
 # the export carries backslash escapes the live document body does not
