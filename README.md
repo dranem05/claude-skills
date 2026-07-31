@@ -2,6 +2,8 @@
 
 Generically useful [Claude Code](https://claude.com/claude-code) skills. Nothing personal or project-specific lands here — each skill is self-contained and usable on any machine.
 
+Building or reviewing a skill here: [`PRIORS.md`](PRIORS.md) collects the defect classes earlier review passes caught — upstream tools that exit 0 having done nothing, output paths derived from the wrong string, guards that a `--` escape hatch routes around, and how a canary lies.
+
 ## Installing a skill
 
 Clone this repo somewhere stable (local disk, not cloud-synced storage — symlinks into mounted volumes dangle when the volume isn't there), then symlink the skill into your user-global skills directory:
