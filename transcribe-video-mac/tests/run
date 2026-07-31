@@ -64,9 +64,11 @@ if [ "$MODE" = "--canary" ]; then
       -e 's|^        \[\[ \$# -eq 0 \]\] .*|        : # CANARY-D|' \
       -e 's|^  \[\[ -e "\$dest" \]\] && err "replacing existing \$dest"|  : # CANARY-E|' \
       -e 's%^  \[\[ -f "\$STAGE\.\$ext" \]\] || die .*%  true  # CANARY-F%' \
+      -e 's|^  DEST_BASE="\$OUT_BASE"$|  DEST_BASE="$OUT_BASE"  # CANARY-G|' \
+      -e 's|^  while ! dest_set_free "\$DEST_BASE"; do|  while false; do  # CANARY-G|' \
       "$HERE/../transcribe-video-mac.sh" > "$SCRIPT"
   chmod +x "$SCRIPT"
-  for tag in CANARY-A CANARY-B CANARY-C CANARY-D CANARY-E CANARY-F; do
+  for tag in CANARY-A CANARY-B CANARY-C CANARY-D CANARY-E CANARY-F CANARY-G; do
     grep -q "$tag" "$SCRIPT" || { echo "CANNOT-RUN: canary setup failed, $tag did not match — the script changed shape"; exit 3; }
   done
   # A mutant that doesn't parse fails every case for the wrong reason and proves nothing.
@@ -207,15 +209,26 @@ if [ "$rc" -ne 0 ] && [ "$claimed" -eq 0 ]; then
   ok "nonzero exit, no paths claimed (prior file left intact: $([ "$stale" -gt 0 ] && echo yes || echo no))"
 else bad "stale transcript reported as this run's result" "rc=$rc; claimed: $(tr '\n' ' ' < "$WORK/c16/o")"; fi
 
-case_begin C17 "a media file whose name collides with an output must not overwrite itself"
+case_begin C17 "a media file whose name collides with an output must survive the default run"
 # ffmpeg sniffs content rather than extension, so a WAV named notes.txt transcribes
-# fine and its own transcript would land on top of the source.
+# fine and its own transcript would land on top of the source. Under the never-clobber
+# default the set shifts aside instead, so the run can succeed AND leave the input whole.
 mkdir -p "$WORK/c17"; fixture "$WORK/c17/notes.txt"
 before=$(wc -c < "$WORK/c17/notes.txt" | tr -d ' ')
 rc=$(run "$WORK/c17o" "$WORK/c17/notes.txt")
 after=$(wc -c < "$WORK/c17/notes.txt" | tr -d ' ')
-if [ "$rc" -ne 0 ] && [ "$before" = "$after" ]; then ok "refused; input intact ($after bytes)"
-else bad "input destroyed by its own output" "rc=$rc; $before bytes -> $after bytes"; fi
+if [ "$before" = "$after" ] && [ -f "$WORK/c17/notes-1.txt" ]; then
+  ok "input intact ($after bytes), transcript went to notes-1.txt"
+else bad "input destroyed by its own output" "rc=$rc; $before bytes -> $after bytes; ls: $(ls "$WORK/c17" | tr '\n' ' ')"; fi
+
+case_begin C17b "--overwrite must refuse when the output would be the input file itself"
+mkdir -p "$WORK/c17b"; fixture "$WORK/c17b/notes.txt"
+before=$(wc -c < "$WORK/c17b/notes.txt" | tr -d ' ')
+rc=$(run "$WORK/c17bo" --overwrite "$WORK/c17b/notes.txt")
+after=$(wc -c < "$WORK/c17b/notes.txt" | tr -d ' ')
+if [ "$rc" -ne 0 ] && [ "$before" = "$after" ] && grep -q "is the input file itself" "$WORK/c17bo.err"; then
+  ok "refused; input intact ($after bytes)"
+else bad "--overwrite destroyed the input" "rc=$rc; $before -> $after bytes"; fi
 
 case_begin C18 "-- must not bypass the one-input guard it is the documented escape hatch for"
 mkdir -p "$WORK/c18"; fixture "$WORK/c18/a.wav"; fixture "$WORK/c18/b.wav"
@@ -233,14 +246,50 @@ ks=$(grep -c 'HAND-CORRECTED SUBS' "$WORK/c19/lecture.srt" || true)
 if [ "$rc" -ne 0 ] && [ "$kt" -gt 0 ] && [ "$ks" -gt 0 ]; then ok "originals survived"
 else bad "failed run destroyed existing sidecars" "rc=$rc; txt kept=$kt srt kept=$ks"; fi
 
-case_begin C20 "replacing an existing sidecar must be announced, never done silently"
+case_begin C20 "the default run must never replace an existing transcript, only write alongside"
 mkdir -p "$WORK/c20"; fixture "$WORK/c20/talk.wav"
 printf 'OLD NOTES\n' > "$WORK/c20/talk.txt"
+printf 'OLD SUBS\n' > "$WORK/c20/talk.srt"
 rc=$(run "$WORK/c20/o" "$WORK/c20/talk.wav")
-warned=$(grep -c 'replacing existing' "$WORK/c20/o.err" || true)
-left=$(grep -c 'OLD NOTES' "$WORK/c20/talk.txt" || true)
-if [ "$rc" -eq 0 ] && [ "$warned" -ge 1 ] && [ "$left" -eq 0 ]; then ok "announced ($warned) and replaced"
-else bad "silent clobber" "rc=$rc; warnings=$warned; old content present=$left"; fi
+kept=$(grep -c 'OLD NOTES' "$WORK/c20/talk.txt" || true)
+keptsrt=$(grep -c 'OLD SUBS' "$WORK/c20/talk.srt" || true)
+told=$(grep -c 'outputs already exist' "$WORK/c20/o.err" || true)
+if [ "$rc" -eq 0 ] && [ "$kept" -gt 0 ] && [ "$keptsrt" -gt 0 ] && [ -f "$WORK/c20/talk-1.txt" ] && [ "$told" -ge 1 ]; then
+  ok "originals untouched, new set at talk-1.*, shift announced"
+else
+  bad "default run clobbered or failed to shift" "rc=$rc; txt kept=$kept srt kept=$keptsrt announced=$told; ls: $(ls "$WORK/c20" | tr '\n' ' ')"
+fi
+
+case_begin C20b "--overwrite must replace in place and announce each replacement"
+mkdir -p "$WORK/c20b"; fixture "$WORK/c20b/talk.wav"
+printf 'OLD NOTES\n' > "$WORK/c20b/talk.txt"
+rc=$(run "$WORK/c20b/o" --overwrite "$WORK/c20b/talk.wav")
+warned=$(grep -c 'replacing existing' "$WORK/c20b/o.err" || true)
+left=$(grep -c 'OLD NOTES' "$WORK/c20b/talk.txt" || true)
+if [ "$rc" -eq 0 ] && [ "$warned" -ge 1 ] && [ "$left" -eq 0 ] && [ ! -f "$WORK/c20b/talk-1.txt" ]; then
+  ok "replaced in place, announced ($warned), no numbered set"
+else bad "--overwrite misbehaved" "rc=$rc; warnings=$warned; old content present=$left"; fi
+
+case_begin C20c "a numbered set must skip past every set already present, not reuse -1"
+mkdir -p "$WORK/c20c"; fixture "$WORK/c20c/lec.wav"
+: > "$WORK/c20c/lec.txt"; : > "$WORK/c20c/lec.srt"
+printf 'FIRST RERUN\n' > "$WORK/c20c/lec-1.txt"; : > "$WORK/c20c/lec-1.srt"
+rc=$(run "$WORK/c20c/o" "$WORK/c20c/lec.wav")
+kept=$(grep -c 'FIRST RERUN' "$WORK/c20c/lec-1.txt" || true)
+if [ "$rc" -eq 0 ] && [ -f "$WORK/c20c/lec-2.txt" ] && [ -f "$WORK/c20c/lec-2.srt" ] && [ "$kept" -gt 0 ]; then
+  ok "advanced to lec-2.*, lec-1.* untouched"
+else bad "numbering reused an occupied slot" "rc=$rc; -1 kept=$kept; ls: $(ls "$WORK/c20c" | tr '\n' ' ')"; fi
+
+case_begin C20d "a partially-occupied set must shift as a unit, never mix runs"
+# .srt free but .txt taken: writing .srt in place would pair a new subtitle with an
+# old transcript, so the whole set has to move together.
+mkdir -p "$WORK/c20d"; fixture "$WORK/c20d/mix.wav"
+printf 'OLD TRANSCRIPT ONLY\n' > "$WORK/c20d/mix.txt"
+rc=$(run "$WORK/c20d/o" "$WORK/c20d/mix.wav")
+kept=$(grep -c 'OLD TRANSCRIPT ONLY' "$WORK/c20d/mix.txt" || true)
+if [ "$rc" -eq 0 ] && [ "$kept" -gt 0 ] && [ -f "$WORK/c20d/mix-1.txt" ] && [ -f "$WORK/c20d/mix-1.srt" ] && [ ! -f "$WORK/c20d/mix.srt" ]; then
+  ok "whole set moved to mix-1.*, nothing mixed"
+else bad "set split across runs" "rc=$rc; old kept=$kept; ls: $(ls "$WORK/c20d" | tr '\n' ' ')"; fi
 
 case_begin C21 "an unrelated binary named main on PATH must not be run as whisper"
 mkdir -p "$WORK/c21/bin"; fixture "$WORK/c21/clip.wav"
@@ -260,7 +309,7 @@ if [ "$MODE" = "--canary" ]; then
   # one still exits nonzero. Its detection was proven against the original script,
   # which exited 0 silently. Everything else must go red or the case is decorative.
   MISSED=""
-  for c in C4 C16 C17 C18 C19 C20; do
+  for c in C4 C16 C17 C17b C18 C19 C20 C20c C20d; do
     case "$FAILED" in *"$c"*) ;; *) MISSED="$MISSED $c";; esac
   done
   [ -z "$MISSED" ] || { echo "CANARY HOLE — stayed green with its fix reverted:$MISSED"; exit 2; }

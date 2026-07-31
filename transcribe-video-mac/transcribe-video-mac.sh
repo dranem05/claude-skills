@@ -16,14 +16,19 @@
 #                  (ignored by .en models, which are English-only).
 #   --keep-wav     Also keep the intermediate 16kHz mono WAV, as
 #                  <video>.16k.wav next to the source file.
+#   --overwrite    Replace existing outputs in place instead of writing a new
+#                  numbered set. Each replacement is announced on stderr.
 #   -h, --help     Show this help.
 #
 # One file per call — a second input is refused rather than half-processed. Loop
 # in the caller for a batch.
 #
-# Existing <video>.txt / <video>.srt are REPLACED (each replacement is announced on
-# stderr). Nothing is touched unless the transcription succeeds: outputs are written
-# to a temp directory first and moved into place only once they exist.
+# Nothing existing is overwritten by default. If <video>.txt or <video>.srt is already
+# there, the whole set shifts to <video>-1.*, then -2, and so on; the paths actually
+# written are printed on stdout. Use --overwrite to replace in place instead.
+#
+# Nothing is touched unless the transcription succeeds either: outputs are written to a
+# temp directory first and moved into place only once they exist.
 #
 # Environment:
 #   WHISPER_MODELS_DIR  Where model .bin files are cached
@@ -37,6 +42,7 @@ set -euo pipefail
 MODEL="base.en"
 LANG_CODE=""
 KEEP_WAV=0
+OVERWRITE=0
 VIDEO=""
 
 err() { printf 'transcribe-video: %s\n' "$*" >&2; }
@@ -51,6 +57,7 @@ while [[ $# -gt 0 ]]; do
     --model) MODEL="${2:-}"; [[ -n "$MODEL" ]] || die "--model needs a value"; shift 2;;
     --lang)  LANG_CODE="${2:-}"; [[ -n "$LANG_CODE" ]] || die "--lang needs a value"; shift 2;;
     --keep-wav) KEEP_WAV=1; shift;;
+    --overwrite) OVERWRITE=1; shift;;
     -h|--help) show_help; exit 0;;
     # "--" is the only way to pass a filename that starts with "-", so it gets the
     # same one-input guard as the normal path rather than silently dropping the rest.
@@ -124,18 +131,7 @@ if [[ ! -f "$MODEL_FILE" ]]; then
   mv "$PART" "$MODEL_FILE"
 fi
 
-# --- Extract audio → 16kHz mono WAV (what whisper.cpp expects) -----------------
-
-TMPDIR_W="$(mktemp -d)"
-cleanup() { rm -rf "$TMPDIR_W"; }
-trap cleanup EXIT
-
-WAV="$TMPDIR_W/audio.wav"
-err "extracting audio from '$VIDEO'…"
-ffmpeg -nostdin -y -i "$VIDEO" -vn -ar 16000 -ac 1 -c:a pcm_s16le "$WAV" >/dev/null 2>&1 \
-  || die "ffmpeg failed to extract audio (is this a valid media file?)"
-
-# --- Transcribe ----------------------------------------------------------------
+# --- Resolve output destinations (before any expensive work) --------------------
 
 # Output basename = the source path minus its extension, so .txt/.srt land beside the
 # input. Strip the extension from the *basename* only: "${VIDEO%.*}" over the whole
@@ -150,17 +146,64 @@ case "$VIDEO_BASE" in
 esac
 OUT_BASE="$VIDEO_DIR/$OUT_STEM"
 
-# An output path can collide with the input itself — ffmpeg sniffs content rather than
-# extension, so a media file named "notes.txt" transcribes fine and would then be
-# overwritten by its own transcript. Compare by inode, since the same file reached by
-# different path spellings is still the same file.
-DESTS=("$OUT_BASE.txt" "$OUT_BASE.srt")
-[[ "$KEEP_WAV" -eq 1 ]] && DESTS+=("$OUT_BASE.16k.wav")
+# A destination set is all-or-nothing: .txt, .srt (and .16k.wav with --keep-wav) must
+# come from the same run, never a mix of a new transcript beside an older subtitle.
+dest_set_free() {
+  local base="$1" ext
+  for ext in txt srt; do
+    [[ -e "$base.$ext" ]] && return 1
+  done
+  if [[ "$KEEP_WAV" -eq 1 ]] && [[ -e "$base.16k.wav" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+# Default is never-clobber: shift the whole set to the next free "-N" rather than
+# replace anything. Transcripts are kilobytes, so keeping an extra copy costs nothing
+# next to losing a hand-corrected .srt — and whisper.cpp itself will overwrite a good
+# transcript with an empty file (exit 0) when it finds no speech.
+if [[ "$OVERWRITE" -eq 1 ]]; then
+  DEST_BASE="$OUT_BASE"
+else
+  DEST_BASE="$OUT_BASE"
+  n=0
+  while ! dest_set_free "$DEST_BASE"; do
+    n=$((n + 1))
+    if [[ "$n" -gt 999 ]]; then
+      die "999 output sets already exist beside '$VIDEO_BASE' — pass --overwrite or clean some up."
+    fi
+    DEST_BASE="$OUT_BASE-$n"
+  done
+  if [[ "$DEST_BASE" != "$OUT_BASE" ]]; then
+    err "outputs already exist for '$VIDEO_BASE' — writing $(basename "$DEST_BASE").* instead (--overwrite to replace)"
+  fi
+fi
+
+# An output path can still collide with the input itself under --overwrite — ffmpeg
+# sniffs content rather than extension, so a media file named "notes.txt" transcribes
+# fine and would then be destroyed by its own transcript. Compare by inode, since the
+# same file reached by different path spellings is still the same file.
+DESTS=("$DEST_BASE.txt" "$DEST_BASE.srt")
+[[ "$KEEP_WAV" -eq 1 ]] && DESTS+=("$DEST_BASE.16k.wav")
 for f in "${DESTS[@]}"; do
   if [[ -e "$f" ]] && [[ "$f" -ef "$VIDEO" ]]; then
     die "refusing to run: output '$f' is the input file itself — give the source a media extension and retry."
   fi
 done
+
+# --- Extract audio → 16kHz mono WAV (what whisper.cpp expects) -----------------
+
+TMPDIR_W="$(mktemp -d)"
+cleanup() { rm -rf "$TMPDIR_W"; }
+trap cleanup EXIT
+
+WAV="$TMPDIR_W/audio.wav"
+err "extracting audio from '$VIDEO'…"
+ffmpeg -nostdin -y -i "$VIDEO" -vn -ar 16000 -ac 1 -c:a pcm_s16le "$WAV" >/dev/null 2>&1 \
+  || die "ffmpeg failed to extract audio (is this a valid media file?)"
+
+# --- Transcribe ----------------------------------------------------------------
 
 # Write outputs to the temp directory first, then move them into place. whisper.cpp
 # exits 0 even when it cannot write its outputs, and an existence check at the final
@@ -179,18 +222,18 @@ for ext in txt srt; do
 done
 
 for ext in txt srt; do
-  dest="$OUT_BASE.$ext"
+  dest="$DEST_BASE.$ext"
   [[ -e "$dest" ]] && err "replacing existing $dest"
   mv -f "$STAGE.$ext" "$dest" || die "could not write '$dest' — is '$VIDEO_DIR' writable?"
 done
 
 if [[ "$KEEP_WAV" -eq 1 ]]; then
-  KEPT_WAV="$OUT_BASE.16k.wav"
+  KEPT_WAV="$DEST_BASE.16k.wav"
   [[ -e "$KEPT_WAV" ]] && err "replacing existing $KEPT_WAV"
   mv -f "$WAV" "$KEPT_WAV" || die "could not write '$KEPT_WAV' — is '$VIDEO_DIR' writable?"
 fi
 
-echo "$OUT_BASE.txt"
-echo "$OUT_BASE.srt"
-[[ "$KEEP_WAV" -eq 1 ]] && echo "$OUT_BASE.16k.wav"
+echo "$DEST_BASE.txt"
+echo "$DEST_BASE.srt"
+[[ "$KEEP_WAV" -eq 1 ]] && echo "$DEST_BASE.16k.wav"
 err "done."

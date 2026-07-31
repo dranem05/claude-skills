@@ -33,10 +33,12 @@ Transcribe a local video or audio file to `.txt` + `.srt` entirely offline, via 
 
 The interesting part: `whisper-cli` exits **0** when it writes nothing at all — an unsupported `--lang` value, or an unwritable destination — so a naive wrapper hands back output paths for files it never produced, and on a re-run those paths hold the *previous* run's transcript. This script writes to a temp directory and moves results into place only once they exist, which also means a failed run can't destroy a transcript that was already there. Output paths are derived from the input's *basename*, since stripping the extension off the whole path truncates at any dot in a parent directory name. Details in `transcribe-video-mac/SKILL.md`.
 
-One file per call, and it refuses to run when an output path would be the input file itself — ffmpeg sniffs content rather than extension, so a media file named `notes.txt` transcribes happily and would otherwise be overwritten by its own transcript.
+**Nothing existing is overwritten.** whisper.cpp has no no-clobber option at all — `-of` is its only output control, and it will replace a good transcript with an *empty file* at exit 0 when it finds no speech. So a re-run shifts its whole output set to `<video>-1.*`, then `-2`, moving `.txt` and `.srt` together so a new transcript is never paired with an older subtitle. `--overwrite` replaces in place when that's what you want. (ffmpeg, the closest sibling tool, resolves the same question by refusing: it prompts when it can and errors out with "Not overwriting" when stdin isn't a tty.)
+
+One file per call, and under `--overwrite` it refuses when an output path would be the input file itself — ffmpeg sniffs content rather than extension, so a media file named `notes.txt` transcribes happily and would otherwise be destroyed by its own transcript.
 
 ```bash
-bash transcribe-video-mac/tests/run            # 21 cases; prints "0 failed"
+bash transcribe-video-mac/tests/run            # 25 cases; prints "0 failed"
 bash transcribe-video-mac/tests/run --canary   # reverts each fix, asserts the suite goes red
 ```
 
