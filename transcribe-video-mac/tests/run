@@ -1,0 +1,272 @@
+#!/usr/bin/env bash
+# Test runner for transcribe-video-mac. No framework: bash 3.2, ffmpeg, grep only.
+#
+#   tests/run            # test the script next to this suite
+#   tests/run --canary   # test a deliberately-broken copy; the suite MUST go red
+#
+# Unlike gdoc-sync's data-driven cases/ layout, this suite is procedural: nearly every
+# case needs bespoke fixture setup (permissions, inode collisions, PATH shadowing) that
+# a declarative case file cannot express. The honesty mechanisms are the same ones:
+#
+#   1. Every case carries a NOTE naming the consequence it prevents. A case that can't
+#      state a consequence is padding.
+#   2. --canary reverts each fix and asserts the covering case goes RED. A mutation
+#      that leaves the suite green is reported as a hole, not ignored.
+#   3. Three outcomes, never two: no cached model is CANNOT-RUN (exit 3), distinct from
+#      pass and fail, so an un-run suite can't be skimmed as a green one.
+#
+# Honour an inherited SCRIPT so --canary can point the suite at a mutated copy.
+# Hardcoding this is the trap gdoc-sync's runner documents: the inner run silently
+# tests the pristine script and every mutation looks survivable.
+#
+# Self-contained: fixtures are synthesized with ffmpeg, so the suite needs no sample
+# media. Requires a whisper model already cached (it will not download one).
+
+# shellcheck disable=SC2016  # the sed programs below are deliberately literal
+# shellcheck disable=SC2010,SC2012  # ls appears only inside failure diagnostics
+
+set -uo pipefail
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+SCRIPT="${SCRIPT:-$HERE/../transcribe-video-mac.sh}"
+MODE="${1:-}"
+
+[ "$(uname -s)" = "Darwin" ] || { echo "CANNOT-RUN: macOS only (uname=$(uname -s))"; exit 3; }
+[ -x "$SCRIPT" ] || { echo "CANNOT-RUN: script not executable at $SCRIPT"; exit 3; }
+command -v ffmpeg >/dev/null 2>&1 || { echo "CANNOT-RUN: ffmpeg not on PATH — needed to synthesize fixtures"; exit 3; }
+command -v whisper-cli >/dev/null 2>&1 || command -v whisper-cpp >/dev/null 2>&1 || {
+  echo "CANNOT-RUN: no whisper.cpp CLI on PATH (brew install whisper-cpp)"; exit 3; }
+
+# Pick the smallest already-cached model. Never download: a test suite that pulls a
+# 150 MB-3 GB model on first run gets disabled by whoever waits for it once.
+MODELS_DIR="${WHISPER_MODELS_DIR:-$HOME/.cache/whisper-cpp}"
+MODEL=""
+for cand in tiny.en tiny base.en base small.en small medium.en medium large-v3-turbo large-v3; do
+  if [ -f "$MODELS_DIR/ggml-$cand.bin" ]; then MODEL="$cand"; break; fi
+done
+[ -n "$MODEL" ] || {
+  echo "CANNOT-RUN: no cached model in $MODELS_DIR"
+  echo "  transcribe one file first, or: curl -L --create-dirs -o '$MODELS_DIR/ggml-base.en.bin' \\"
+  echo "    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
+  exit 3; }
+
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/tvm-tests.XXXXXX")"
+# C12 chmods a directory read-only; restore it unconditionally or the temp cleanup and
+# any later run in the same tree both fail in confusing ways.
+cleanup() { chmod -R u+w "$WORK" 2>/dev/null; rm -rf "$WORK"; }
+trap cleanup EXIT
+
+if [ "$MODE" = "--canary" ]; then
+  SCRIPT="$WORK/broken.sh"
+  sed -e 's|^OUT_BASE="\$VIDEO_DIR/\$OUT_STEM"|OUT_BASE="${VIDEO%.*}"  # CANARY-A|' \
+      -e 's|^STAGE="\$TMPDIR_W/out"|STAGE="$OUT_BASE"  # CANARY-B|' \
+      -e 's|^    die "refusing to run: output|    err "CANARY-C would have refused: output|' \
+      -e 's|^        \[\[ \$# -eq 0 \]\] .*|        : # CANARY-D|' \
+      -e 's|^  \[\[ -e "\$dest" \]\] && err "replacing existing \$dest"|  : # CANARY-E|' \
+      -e 's%^  \[\[ -f "\$STAGE\.\$ext" \]\] || die .*%  true  # CANARY-F%' \
+      "$HERE/../transcribe-video-mac.sh" > "$SCRIPT"
+  chmod +x "$SCRIPT"
+  for tag in CANARY-A CANARY-B CANARY-C CANARY-D CANARY-E CANARY-F; do
+    grep -q "$tag" "$SCRIPT" || { echo "CANNOT-RUN: canary setup failed, $tag did not match — the script changed shape"; exit 3; }
+  done
+  # A mutant that doesn't parse fails every case for the wrong reason and proves nothing.
+  bash -n "$SCRIPT" || { echo "CANNOT-RUN: mutated copy does not parse"; exit 3; }
+  echo "### CANARY MODE — every fix reverted; the suite must go red"
+fi
+
+echo "model=$MODEL  script=$SCRIPT"
+echo
+
+PASS=0; FAIL=0; FAILED=""
+CASE=""; NOTE=""
+ok()  { printf '  PASS  %s\n' "$1"; PASS=$((PASS+1)); }
+bad() { printf '  FAIL  %s\n' "$1"; printf '        %s\n' "$2"; FAIL=$((FAIL+1)); FAILED="$FAILED $CASE"; }
+case_begin() {
+  CASE="$1"; NOTE="$2"
+  [ "${#NOTE}" -ge 40 ] || { echo "SUITE BUG: $CASE note is too short to name a consequence"; exit 3; }
+  printf '== %s: %s\n' "$CASE" "$NOTE"
+}
+# Synthesize a small speech-free clip. Content doesn't matter: every assertion here is
+# about paths, exit codes and file identity, never transcript text.
+# Always synthesize to a .wav and then rename: ffmpeg infers the container from the
+# output extension, so writing directly to an extensionless or oddly-named target
+# fails and silently leaves the case with no input file at all.
+fixture() {
+  local target="$1" tmp
+  tmp="$(dirname "$target")/.fixture.$$.wav"
+  ffmpeg -nostdin -y -f lavfi -i "sine=frequency=300:duration=1" \
+    -ar 16000 -ac 1 -c:a pcm_s16le "$tmp" >/dev/null 2>&1 || return 1
+  mv "$tmp" "$target"
+}
+run() { local out="$1"; shift; "$SCRIPT" --model "$MODEL" "$@" >"$out" 2>"$out.err"; echo $?; }
+
+case_begin C1 "outputs must land beside the source, not in the caller's cwd"
+mkdir -p "$WORK/c1"; fixture "$WORK/c1/clip.wav"
+rc=$(run "$WORK/c1/o" "$WORK/c1/clip.wav")
+if [ "$rc" -eq 0 ] && [ -f "$WORK/c1/clip.txt" ] && [ -f "$WORK/c1/clip.srt" ]; then ok "beside source"
+else bad "beside source" "rc=$rc; ls: $(ls "$WORK/c1" | tr '\n' ' ')"; fi
+
+case_begin C2 "spaces in media filenames must not split into separate arguments"
+mkdir -p "$WORK/c2"; fixture "$WORK/c2/my clip file.wav"
+rc=$(run "$WORK/c2/o" "$WORK/c2/my clip file.wav")
+if [ "$rc" -eq 0 ] && [ -f "$WORK/c2/my clip file.txt" ]; then ok "spaces handled"
+else bad "spaces" "rc=$rc; ls: $(ls "$WORK/c2" | tr '\n' ' ')"; fi
+
+case_begin C3 "a versioned name like my.clip.v2.wav must lose only its real extension"
+mkdir -p "$WORK/c3"; fixture "$WORK/c3/my.clip.v2.wav"
+rc=$(run "$WORK/c3/o" "$WORK/c3/my.clip.v2.wav")
+if [ "$rc" -eq 0 ] && [ -f "$WORK/c3/my.clip.v2.txt" ]; then ok "only final extension stripped"
+else bad "multi-dot name" "rc=$rc; ls: $(ls "$WORK/c3" | tr '\n' ' ')"; fi
+
+case_begin C4 "an extensionless file under a dotted directory must not write two levels up"
+mkdir -p "$WORK/host.example.com/videos"; fixture "$WORK/host.example.com/videos/recording"
+rc=$(run "$WORK/c4o" "$WORK/host.example.com/videos/recording")
+if [ -f "$WORK/host.example.com/videos/recording.txt" ] && [ -f "$WORK/host.example.com/videos/recording.srt" ]; then
+  ok "beside source"
+else
+  bad "escaped the source directory" "rc=$rc; claimed: $(tr '\n' ' ' < "$WORK/c4o"); stray: $(find "$WORK" -maxdepth 1 -name 'host.example.*' | tr '\n' ' ')"
+fi
+
+case_begin C5 "a missing input must fail before any dependency install or download"
+rc=$(run "$WORK/c5o" "$WORK/nope.wav")
+if [ "$rc" -ne 0 ] && grep -q "file not found" "$WORK/c5o.err"; then ok "clean refusal"
+else bad "missing input" "rc=$rc; err=$(head -1 "$WORK/c5o.err")"; fi
+
+case_begin C6 "a non-media file must fail clearly rather than produce an empty transcript"
+mkdir -p "$WORK/c6"; printf 'not audio at all\n' > "$WORK/c6/fake.wav"
+rc=$(run "$WORK/c6/o" "$WORK/c6/fake.wav")
+if [ "$rc" -ne 0 ] && grep -q "ffmpeg failed" "$WORK/c6/o.err"; then ok "clean refusal"
+else bad "non-media input" "rc=$rc; err=$(tail -1 "$WORK/c6/o.err")"; fi
+
+case_begin C7 "an unrecognized flag must not be silently treated as the input filename"
+rc=$(run "$WORK/c7o" --bogus "$WORK/c1/clip.wav")
+if [ "$rc" -ne 0 ] && grep -q "unknown option" "$WORK/c7o.err"; then ok "clean refusal"
+else bad "unknown option" "rc=$rc; err=$(head -1 "$WORK/c7o.err")"; fi
+
+case_begin C8 "--model with no value must not silently consume the filename as its value"
+"$SCRIPT" --model >"$WORK/c8o" 2>"$WORK/c8o.err"; rc=$?
+if [ "$rc" -ne 0 ] && grep -q "needs a value" "$WORK/c8o.err"; then ok "clean refusal"
+else bad "--model with no value" "rc=$rc; err=$(head -1 "$WORK/c8o.err")"; fi
+
+case_begin C9 "two inputs must be refused, not silently reduced to transcribing one"
+mkdir -p "$WORK/c9"; fixture "$WORK/c9/a.wav"; fixture "$WORK/c9/b.wav"
+rc=$(run "$WORK/c9/o" "$WORK/c9/a.wav" "$WORK/c9/b.wav")
+if [ "$rc" -ne 0 ] && grep -q "more than one input file" "$WORK/c9/o.err"; then ok "refused"
+else bad "two inputs" "rc=$rc; produced $(ls "$WORK/c9" | grep -c '\.txt$') txt"; fi
+
+case_begin C10 "a model name must not escape the cache directory or the download URL"
+"$SCRIPT" --model "../../../../tmp/evil" "$WORK/c1/clip.wav" >"$WORK/c10o" 2>"$WORK/c10o.err"; rc=$?
+if [ "$rc" -ne 0 ] && grep -q "invalid model name" "$WORK/c10o.err"; then ok "rejected before any fetch"
+elif grep -qiE "huggingface|downloading" "$WORK/c10o.err"; then
+  bad "traversing model name" "attempted a fetch: $(grep -oE 'https://[^ ]*' "$WORK/c10o.err" | head -1)"
+else bad "traversing model name" "rc=$rc; err=$(head -2 "$WORK/c10o.err" | tr '\n' ' ')"; fi
+
+case_begin C11 "--keep-wav must land beside the source, not in a purgeable temp directory"
+mkdir -p "$WORK/c11"; fixture "$WORK/c11/keep.wav"
+rc=$(run "$WORK/c11/o" --keep-wav "$WORK/c11/keep.wav")
+last="$(tail -1 "$WORK/c11/o")"
+if [ "$rc" -eq 0 ] && [ -f "$WORK/c11/keep.16k.wav" ] && [ "$last" = "$WORK/c11/keep.16k.wav" ]; then
+  ok "kept beside source and announced on stdout"
+else bad "--keep-wav location" "rc=$rc; last stdout line='$last'; ls: $(ls "$WORK/c11" | tr '\n' ' ')"; fi
+
+case_begin C12 "an unwritable destination must exit nonzero instead of claiming success"
+mkdir -p "$WORK/c12"; fixture "$WORK/c12/ro.wav"; chmod a-w "$WORK/c12"
+rc=$(run "$WORK/c12o" "$WORK/c12/ro.wav")
+chmod u+w "$WORK/c12"
+if [ "$rc" -ne 0 ]; then ok "nonzero exit (rc=$rc)"
+else bad "unwritable destination" "rc=0 while writing nothing; claimed: $(tr '\n' ' ' < "$WORK/c12o")"; fi
+
+case_begin C13 "a bare relative filename must resolve beside the source, not break"
+mkdir -p "$WORK/c13"; fixture "$WORK/c13/rel.wav"
+( cd "$WORK/c13" && "$SCRIPT" --model "$MODEL" rel.wav >o 2>o.err ); rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$WORK/c13/rel.txt" ]; then ok "relative path handled"
+else bad "relative path" "rc=$rc; ls: $(ls "$WORK/c13" | tr '\n' ' ')"; fi
+
+case_begin C14 "a dotfile media name must keep its stem instead of losing the leading dot"
+mkdir -p "$WORK/c14"; fixture "$WORK/c14/.hidden.wav"
+rc=$(run "$WORK/c14o" "$WORK/c14/.hidden.wav")
+if [ "$rc" -eq 0 ] && [ -f "$WORK/c14/.hidden.txt" ]; then ok "stem preserved"
+else bad "dotfile name" "rc=$rc; ls: $(ls -a "$WORK/c14" | tr '\n' ' ')"; fi
+
+case_begin C15 "an extensionless file in a plain directory must keep its whole name as the stem"
+mkdir -p "$WORK/c15"; fixture "$WORK/c15/recording"
+rc=$(run "$WORK/c15o" "$WORK/c15/recording")
+if [ "$rc" -eq 0 ] && [ -f "$WORK/c15/recording.txt" ]; then ok "stem kept"
+else bad "extensionless" "rc=$rc; ls: $(ls "$WORK/c15" | tr '\n' ' ')"; fi
+
+case_begin C16 "a run that wrote nothing must not hand back an older run's transcript"
+# whisper.cpp exits 0 on an unsupported --lang and writes no files, so an existence
+# check at the destination passes on sidecars left by an earlier successful run.
+mkdir -p "$WORK/c16"; fixture "$WORK/c16/clip.wav"
+run "$WORK/c16/first" "$WORK/c16/clip.wav" >/dev/null
+printf 'STALE FROM AN OLDER RECORDING\n' > "$WORK/c16/clip.txt"
+"$SCRIPT" --model "$MODEL" --lang zzz "$WORK/c16/clip.wav" >"$WORK/c16/o" 2>"$WORK/c16/o.err"; rc=$?
+claimed=$(grep -c 'clip.txt' "$WORK/c16/o" || true)
+stale=$(grep -c 'STALE FROM AN OLDER RECORDING' "$WORK/c16/clip.txt" || true)
+if [ "$rc" -ne 0 ] && [ "$claimed" -eq 0 ]; then
+  ok "nonzero exit, no paths claimed (prior file left intact: $([ "$stale" -gt 0 ] && echo yes || echo no))"
+else bad "stale transcript reported as this run's result" "rc=$rc; claimed: $(tr '\n' ' ' < "$WORK/c16/o")"; fi
+
+case_begin C17 "a media file whose name collides with an output must not overwrite itself"
+# ffmpeg sniffs content rather than extension, so a WAV named notes.txt transcribes
+# fine and its own transcript would land on top of the source.
+mkdir -p "$WORK/c17"; fixture "$WORK/c17/notes.txt"
+before=$(wc -c < "$WORK/c17/notes.txt" | tr -d ' ')
+rc=$(run "$WORK/c17o" "$WORK/c17/notes.txt")
+after=$(wc -c < "$WORK/c17/notes.txt" | tr -d ' ')
+if [ "$rc" -ne 0 ] && [ "$before" = "$after" ]; then ok "refused; input intact ($after bytes)"
+else bad "input destroyed by its own output" "rc=$rc; $before bytes -> $after bytes"; fi
+
+case_begin C18 "-- must not bypass the one-input guard it is the documented escape hatch for"
+mkdir -p "$WORK/c18"; fixture "$WORK/c18/a.wav"; fixture "$WORK/c18/b.wav"
+"$SCRIPT" --model "$MODEL" -- "$WORK/c18/a.wav" "$WORK/c18/b.wav" >"$WORK/c18/o" 2>"$WORK/c18/o.err"; rc=$?
+if [ "$rc" -ne 0 ] && grep -qE "more than one input|unexpected arguments" "$WORK/c18/o.err"; then ok "refused via -- too"
+else bad "-- bypasses the guard" "rc=$rc; produced $(ls "$WORK/c18" | grep -c '\.txt$') txt"; fi
+
+case_begin C19 "a failed run must leave a hand-corrected transcript or subtitle file alone"
+mkdir -p "$WORK/c19"; fixture "$WORK/c19/lecture.wav"
+printf 'HAND-WRITTEN NOTES\n' > "$WORK/c19/lecture.txt"
+printf 'HAND-CORRECTED SUBS\n' > "$WORK/c19/lecture.srt"
+"$SCRIPT" --model "$MODEL" --lang zzz "$WORK/c19/lecture.wav" >/dev/null 2>&1; rc=$?
+kt=$(grep -c 'HAND-WRITTEN NOTES' "$WORK/c19/lecture.txt" || true)
+ks=$(grep -c 'HAND-CORRECTED SUBS' "$WORK/c19/lecture.srt" || true)
+if [ "$rc" -ne 0 ] && [ "$kt" -gt 0 ] && [ "$ks" -gt 0 ]; then ok "originals survived"
+else bad "failed run destroyed existing sidecars" "rc=$rc; txt kept=$kt srt kept=$ks"; fi
+
+case_begin C20 "replacing an existing sidecar must be announced, never done silently"
+mkdir -p "$WORK/c20"; fixture "$WORK/c20/talk.wav"
+printf 'OLD NOTES\n' > "$WORK/c20/talk.txt"
+rc=$(run "$WORK/c20/o" "$WORK/c20/talk.wav")
+warned=$(grep -c 'replacing existing' "$WORK/c20/o.err" || true)
+left=$(grep -c 'OLD NOTES' "$WORK/c20/talk.txt" || true)
+if [ "$rc" -eq 0 ] && [ "$warned" -ge 1 ] && [ "$left" -eq 0 ]; then ok "announced ($warned) and replaced"
+else bad "silent clobber" "rc=$rc; warnings=$warned; old content present=$left"; fi
+
+case_begin C21 "an unrelated binary named main on PATH must not be run as whisper"
+mkdir -p "$WORK/c21/bin"; fixture "$WORK/c21/clip.wav"
+printf '#!/bin/sh\necho "UNRELATED BINARY RAN" >&2\nexit 0\n' > "$WORK/c21/bin/main"
+chmod +x "$WORK/c21/bin/main"
+PATH="$WORK/c21/bin:$PATH" "$SCRIPT" --model "$MODEL" "$WORK/c21/clip.wav" \
+  >"$WORK/c21/o" 2>"$WORK/c21/o.err"; rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q "UNRELATED BINARY RAN" "$WORK/c21/o.err"; then ok "used the real whisper binary"
+else bad "'main' on PATH hijacked the run" "rc=$rc"; fi
+
+echo
+echo "$((PASS+FAIL)) cases run: $PASS passed, $FAIL failed${FAILED:+ ($FAILED)}"
+
+if [ "$MODE" = "--canary" ]; then
+  # C12 is deliberately absent: three independent layers each catch an unwritable
+  # destination (staged-output check, mv failure, destination check), so reverting any
+  # one still exits nonzero. Its detection was proven against the original script,
+  # which exited 0 silently. Everything else must go red or the case is decorative.
+  MISSED=""
+  for c in C4 C16 C17 C18 C19 C20; do
+    case "$FAILED" in *"$c"*) ;; *) MISSED="$MISSED $c";; esac
+  done
+  [ -z "$MISSED" ] || { echo "CANARY HOLE — stayed green with its fix reverted:$MISSED"; exit 2; }
+  echo "CANARY OK — every covered case went red."
+  exit 0
+fi
+
+[ "$FAIL" -eq 0 ] || exit 1
+echo "ALL GREEN"

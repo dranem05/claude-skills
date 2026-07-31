@@ -8,8 +8,9 @@ Clone this repo somewhere stable (local disk, not cloud-synced storage — symli
 
 ```bash
 git clone https://github.com/dranem05/claude-skills.git ~/claude-skills
-ln -s ~/claude-skills/airdrop   ~/.claude/skills/airdrop
-ln -s ~/claude-skills/gdoc-sync ~/.claude/skills/gdoc-sync
+ln -s ~/claude-skills/airdrop              ~/.claude/skills/airdrop
+ln -s ~/claude-skills/gdoc-sync            ~/.claude/skills/gdoc-sync
+ln -s ~/claude-skills/transcribe-video-mac ~/.claude/skills/transcribe-video-mac
 ```
 
 **If a skill directory of that name already exists, remove it first.** `ln -s` against an existing *directory* silently creates a symlink *inside* it (`~/.claude/skills/gdoc-sync/gdoc-sync`) and exits 0 — nothing is installed, and the old copy keeps loading. Check with `ls -l ~/.claude/skills/`: an installed skill shows as `name -> /path/to/repo/name`.
@@ -25,6 +26,21 @@ Send file(s) to a nearby Apple device via AirDrop from the terminal — opens th
 The interesting part: macOS's `NSSharingServiceDelegate` is blind to cancel-vs-sent (`didShareItems` fires identically for both), so the helper snapshots a `sharingd` preference key that advances only when a transfer actually starts, and degrades to an honest `CLOSED` verdict when the key is unavailable. Details in `airdrop/SKILL.md`.
 
 Works from any cwd; the only human steps are the ones macOS keeps human by design (picking the receiving device, and the Accept prompt on a different-Apple-ID receiver).
+
+### transcribe-video-mac (macOS)
+
+Transcribe a local video or audio file to `.txt` + `.srt` entirely offline, via [whisper.cpp](https://github.com/ggml-org/whisper.cpp) — Metal-accelerated on Apple Silicon. Deps (`ffmpeg`, `whisper-cpp`) install through Homebrew on first run; the model is fetched once and cached. No audio leaves the machine.
+
+The interesting part: `whisper-cli` exits **0** when it writes nothing at all — an unsupported `--lang` value, or an unwritable destination — so a naive wrapper hands back output paths for files it never produced, and on a re-run those paths hold the *previous* run's transcript. This script writes to a temp directory and moves results into place only once they exist, which also means a failed run can't destroy a transcript that was already there. Output paths are derived from the input's *basename*, since stripping the extension off the whole path truncates at any dot in a parent directory name. Details in `transcribe-video-mac/SKILL.md`.
+
+One file per call, and it refuses to run when an output path would be the input file itself — ffmpeg sniffs content rather than extension, so a media file named `notes.txt` transcribes happily and would otherwise be overwritten by its own transcript.
+
+```bash
+bash transcribe-video-mac/tests/run            # 21 cases; prints "0 failed"
+bash transcribe-video-mac/tests/run --canary   # reverts each fix, asserts the suite goes red
+```
+
+The suite synthesizes its own fixtures with ffmpeg, so it needs no sample media, and it refuses to download a model — no cached model is a distinct `CANNOT-RUN` (exit 3) rather than a pass or a silent multi-gigabyte fetch. Every case states the consequence it prevents, and `--canary` reports a "hole" for any reverted fix the tests fail to catch.
 
 ### gdoc-sync
 
