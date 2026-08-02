@@ -19,6 +19,12 @@ never produced.
 
 **Working rule:** never infer success from an exit code alone. Verify the artifact.
 
+Same shape for in-process APIs, not just subprocesses. DaVinci Resolve's
+`ImportTimelineFromFile` returns `true` and creates no timeline when the timeline name is
+already taken; a caller trusting the return value reports a successful handoff and leaves
+an empty project. Verify by observable state change — count the objects before and after —
+not by what the call says it did.
+
 ## 2. Existence is not freshness
 
 The obvious follow-on fix — check the output file exists after the run — is still wrong.
@@ -107,3 +113,28 @@ things that actually survived a clean keyword sweep:
   the terms you already thought of.
 
 Use a documentation-reserved domain (`example.com`) in fixtures rather than a real one.
+
+## 10. A clean negative can mean the probe was aimed at the wrong object
+
+The inverse of #8, and worse, because nothing announces it. A fidelity harness reported
+"markers: 0" on four consecutive runs. The markers were being attached to one object
+(an OTIO `Track`) while the readback queried a different one (Resolve's *timeline*-level
+`GetMarkers()`). The probe was structurally incapable of ever returning non-zero, and every
+run was measuring nothing.
+
+It survived four rounds because a clean negative is *comfortable*: it was internally
+consistent, it agreed with a plausible prior ("interchange formats lose markers, everyone
+knows that"), and it closed a question instead of opening one. It got written into a
+findings doc as a measured fact and was nearly published as guidance. A red result would
+have been investigated immediately; a tidy zero got believed.
+
+**Working rule:** before recording that something is absent, lost, unsupported, or clean,
+prove the probe can see that thing *when it is definitely present*. A positive control is
+one extra case and it converts "we found nothing" into "we would have found it." Where no
+positive control is possible, record the result as **unverified**, never as negative.
+
+**Smell test:** any finding phrased as an absence — "no drift," "no matches," "nothing
+incoming," "markers not supported," "zero fillers" — is a claim that a detector both ran
+*and* pointed at the right place. Absence findings should cost more scrutiny than presence
+findings, not less. The habit that catches these is asking "what would this probe do if the
+thing were there?" before believing that it isn't.
