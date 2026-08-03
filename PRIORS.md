@@ -138,3 +138,42 @@ incoming," "markers not supported," "zero fillers" — is a claim that a detecto
 *and* pointed at the right place. Absence findings should cost more scrutiny than presence
 findings, not less. The habit that catches these is asking "what would this probe do if the
 thing were there?" before believing that it isn't.
+
+## 11. A comparison is only a comparison if both sides are measured the same way
+
+A detector was failing on a subset of events, and a plausible feature was proposed to
+separate them. The probe measured that feature on confirmed positives and on a large
+sample of negatives, and returned a clean, quantified refutation: the positives scored
+*lower* than the negatives on every variant of the feature. Convincing, and wrong.
+
+The two sides had been measured differently. The positives were sampled at each event's
+onset — the instant the rise *begins*, where the rise is ~0 by construction — while the
+negatives were sampled at the *peak* of their rise. One side was reading the bottom of the
+curve and the other the top. A second defect compounded it: an aggregate across frequency
+bands used a `min`, which silently returned a fixed value whenever any band was digitally
+silent at both ends of the window, so part of the population was measuring silence rather
+than the feature.
+
+Corrected — same anchoring on both sides, floored levels — the hypothesis was still
+refuted, but by a different margin and for a different reason. The first run happened to
+reach the right verdict through two bugs, which is the worst possible outcome: had it
+landed the other way it would have been acted on.
+
+**Working rule:** in any A/B measurement, write the sampling for both sides once and call
+it twice. If positives and negatives are collected by different code paths, they are almost
+certainly measuring different quantities. State explicitly what instant, window, and
+aggregation each side uses, and check that those three match before reading the numbers.
+
+**The wider habit — a red result is a claim too.** #10 covers the comfortable clean
+negative. This is the mirror: a result that reports a *problem* also escapes audit, because
+finding a problem feels like diligence rather than like a conclusion needing support. Three
+separate instruments produced confident wrong output in one working session — one reported
+a refutation from mismatched sampling, one reported "0 corrections, 0 remaining errors"
+while iterating over an empty list it had failed to populate, and one reported three
+spelling errors that were the tool's own regex matching a substring of a filesystem path.
+Two of the three read as *failures*, and both nearly got reported as findings.
+
+**Smell test:** before believing any measured result, ask what the instrument would print
+if it were broken. If the answer resembles what it just printed — in either direction —
+the instrument needs a control before the result means anything. A number is evidence about
+the world only once it is evidence about itself.
