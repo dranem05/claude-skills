@@ -133,7 +133,7 @@ Everything follows from that. Measured live, 2026-07-28:
 
 An edit that *moves* text across a boundary — pulling a word out of a bold run — cannot be decomposed. Then: push with the live-accurate string, accept the flattening, and restyle. `docs_apply_text_style` and `docs_apply_paragraph_style` (which takes `HEADING_1`…`HEADING_6`) both need raw `startIndex`/`endIndex`, so read `docs_read_document format=json` — it is far too large for context (845 KB on a 660-line doc), but the harness spills it to a file, so `grep` that file for your text and read the enclosing `textRun`'s indices. Verified: restoring bold on a 13-character span took one styling call at indices 396–409.
 
-**Two cautions.** Indices are valid only for the document state you read them from, and *any* intervening edit invalidates them — a stale index silently styles the wrong characters. And the cost is per formatting *run*, not per edit, so a block with a dozen runs means a dozen index lookups. Past one or two runs, prefer the placeholder route below.
+**Two cautions.** Indices are valid only for the document state you read them from, and *any* intervening edit invalidates them — a stale index silently styles the wrong characters. And the cost is per formatting *run*, not per edit, so a block with a dozen runs means a dozen index lookups. Past one or two runs, prefer the label-and-paste route below.
 
 **Never build a find string out of a table row.** The export renders a native table as `| a | b |`, but the live document has cells and contains no `|` there — so a piped row pre-flights as unique and then pushes `occurrencesChanged: 0`, silently. Measured live. Target the text of a *single cell* (`Thu 2026-03-05`), which is real text. `checkfind` now refuses this shape (`TRIP: find-spans-table-cells`), but the check is narrow by necessity: a pipe can be genuine body text, so it only fires when the matched line is itself a table row.
 
@@ -159,20 +159,28 @@ Read `occurrencesChanged` on every response and treat three outcomes as distinct
 A line split is not cosmetic noise. If Drive has a break the local copy lacks, pull it; if local has one Drive lacks, push it. Two mechanics to know:
 
 - **The export marks a soft line break (Shift+Enter) with two trailing spaces**, and a hard paragraph break as a blank line. So `foo.  ` followed by `bar` is one paragraph in the document; `foo.` then a blank line then `bar` is two.
-- **A newline in the `replace` string creates a *soft* break, not a paragraph break.** Verified live: a `replace` whose newline fell between two sentences did split the line, but the re-export showed the first sentence's closing word followed by two trailing spaces — the soft-break marker, not a new paragraph. If you need a genuine paragraph boundary, that is not reachable through `find_and_replace` — use the placeholder route below, or have the user press Enter.
+- **A newline in the `replace` string creates a *soft* break, not a paragraph break.** Verified live: a `replace` whose newline fell between two sentences did split the line, but the re-export showed the first sentence's closing word followed by two trailing spaces — the soft-break marker, not a new paragraph. If you need a genuine paragraph boundary, that is not reachable through `find_and_replace` — use the label-and-paste route below, or have the user press Enter.
 
 Also beware: splitting a line usually means matching text on both sides of the split point, which is exactly where a formatting boundary tends to sit. Apply the marker rule first and decompose, or the split will cost you the formatting.
 
-### Offer the placeholder route when an edit gets hairy
+### The label-and-paste route — THE DEFAULT for adding a new section
 
-Two situations do not reward cleverness: inserting a large structured block, and editing a span with many formatting runs. `find_and_replace` cannot insert at all (only replace), and markdown does not render on push, so a pushed block arrives as literal characters.
+**`find_and_replace` cannot insert, only replace.** There is no API path that puts a new block at a chosen point in a formatted Doc, and markdown does not render on push, so anything pushed arrives as literal characters. Those two facts together mean **inserting a section is not an edit this skill can do alone** — it needs one gesture from the user, and the whole craft is making that gesture small and unambiguous.
 
-**Offer the user this instead, before grinding through it:**
+**So this is the standing procedure for adding a new section, not a fallback.** Reach for it first; do not go anchor-hunting.
 
-1. **A placeholder.** Ask them to type a marker where the content belongs — `<<SYNC-HERE>>` — and replace that. It is unique by construction, needs no anchor hunting, and cannot cross a formatting boundary.
-2. **Literal markdown, deliberately.** Push the block *as markdown source*. It lands as visible characters, which is fine: the user selects it in the Drive UI and pastes-as-markdown, and Google renders the whole thing — headings, tables, bold — in one gesture. Far easier than hand-styling a dozen runs, and easier for them than copying out of a local file and finding the spot themselves.
+1. **Write the section locally, in markdown.** Normal work, in the local mirror.
+2. **Ask the user to paste a unique label at the insertion point.** Give them the exact string — `<<SYNC-HERE>>`, or numbered `<<SYNC-1>>`, `<<SYNC-2>>` when several land in one pass — and say precisely where it goes ("directly under the *Run of Show* heading"). Unique by construction, so it needs no anchor hunting and cannot cross a formatting boundary.
+3. **Replace the label with the section**, one `find_and_replace`, `matchCase: true`. Read `occurrencesChanged`: **1** is the only success.
+4. **Tell the user to select that block and paste-as-markdown.** It lands as literal markdown source, which is the point: Google converts headings, tables, bold and lists in one gesture. They copy from the local file or re-select in place.
 
-State the trade plainly and let them choose. Grinding out thirty styling calls with hand-computed indices, when a placeholder plus one paste would do, is the wrong instinct.
+**Why this beats the alternatives.** Hand-styling means `docs_read_document format=json`, grepping a file that runs to hundreds of KB, and one `apply_text_style` call per formatting run against indices that any intervening edit silently invalidates. A dozen runs is a dozen lookups and a dozen chances to style the wrong characters. The label plus one paste is two messages to the user and one API call.
+
+**It also solves the paragraph-break problem.** A newline in a `replace` string produces a *soft* break, never a paragraph boundary (see "Line structure is content"). Genuine paragraph structure is unreachable through `find_and_replace`, so any multi-paragraph insert needs this route regardless of how simple it looks.
+
+**Same route, second situation:** editing a span with many formatting runs. Same reasoning, same trade.
+
+⏳ **This is a workaround with an expiry.** It exists only because the MCP can neither insert at a position nor render markdown on write. **When it gains either, delete this section** and say so in the report — see "This skill is a workaround layer". Until then, treat the user's one paste as a designed step rather than a failure, and do not apologize for it.
 
 ### Phase 6 — Verify (required for `push-only` / `two-way`)
 
