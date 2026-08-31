@@ -11,6 +11,7 @@ Clone this repo somewhere stable (local disk, not cloud-synced storage — symli
 ```bash
 git clone https://github.com/dranem05/claude-skills.git ~/claude-skills
 ln -s ~/claude-skills/airdrop              ~/.claude/skills/airdrop
+ln -s ~/claude-skills/be-concise           ~/.claude/skills/be-concise
 ln -s ~/claude-skills/gdoc-sync            ~/.claude/skills/gdoc-sync
 ln -s ~/claude-skills/transcribe-video-mac ~/.claude/skills/transcribe-video-mac
 ```
@@ -20,6 +21,16 @@ ln -s ~/claude-skills/transcribe-video-mac ~/.claude/skills/transcribe-video-mac
 Skills load at session start; the skill is available as a slash command (e.g. `/airdrop`) in every Claude Code session from the next session on. Update with `git pull` — changes take effect at the next session start.
 
 ## Skills
+
+### be-concise
+
+A brevity-and-directness contract, invoked as `/be-concise` at session start to set the register, or mid-session when replies drift long, hedgy, or into generic-LLM voice. Prose only — no code, no dependencies.
+
+The interesting part: the useful half is the **anti-rules**. "Be concise" is easy to write from an armchair; what you can't write from an armchair is the damage done by following it too well. Those rules only exist after a first-pass concision rule has been applied to real work and wrecked something — so this one carries them explicitly. Compress, don't drop. Split a too-long comment before cutting it. Never trade precision for length. Brevity is not permission to narrow scope.
+
+The sharpest of them isn't a length rule at all: when drafting a message, cut what *this recipient* already knows. That's a semantic test rather than a word budget, and it cuts differently — sometimes removing a paragraph, sometimes adding one where the reader lacks context a colleague would have.
+
+Derived by auditing a real correction log rather than by theorizing about verbosity, which is why it reads as second-order. Adapt the specifics to your own voice; the anti-rules are the portable part.
 
 ### airdrop (macOS)
 
