@@ -11,6 +11,7 @@ Clone this repo somewhere stable (local disk, not cloud-synced storage — symli
 ```bash
 git clone https://github.com/dranem05/claude-skills.git ~/claude-skills
 ln -s ~/claude-skills/airdrop              ~/.claude/skills/airdrop
+ln -s ~/claude-skills/asana-rest           ~/.claude/skills/asana-rest
 ln -s ~/claude-skills/be-concise           ~/.claude/skills/be-concise
 ln -s ~/claude-skills/gdoc-sync            ~/.claude/skills/gdoc-sync
 ln -s ~/claude-skills/transcribe-video-mac ~/.claude/skills/transcribe-video-mac
@@ -31,6 +32,12 @@ The interesting part: the useful half is the **anti-rules**. "Be concise" is eas
 The sharpest of them isn't a length rule at all: when drafting a message, cut what *this recipient* already knows. That's a semantic test rather than a word budget, and it cuts differently — sometimes removing a paragraph, sometimes adding one where the reader lacks context a colleague would have.
 
 Derived by auditing a real correction log rather than by theorizing about verbosity, which is why it reads as second-order. Adapt the specifics to your own voice; the anti-rules are the portable part.
+
+### asana-rest
+
+An escape hatch for the handful of Asana operations the local `asana_*` MCP servers have no tool for — chiefly **editing a comment you already posted**, which is REST-only (`PUT /stories/<gid>`). Prose only; the recipes are curl.
+
+The useful trick it documents: link a task by permalink inside `html_text` and Asana rewrites the anchor into a **dynamic chip** that renders the target's current name and gains a ✓ when it completes. Beats a bare gid (unreadable) or a hand-typed name (stale on rename). Assumes PATs in `~/.config/openbrain/.env`; adjust that path if yours live elsewhere.
 
 ### airdrop (macOS)
 
