@@ -77,6 +77,41 @@ If you convert a local copy, do it with a **word-boundary match** and **assert t
 
 ---
 
+## 5. There is no way to pull repeatedly while holding local edits back (2026-09-03)
+
+The three modes are defined by **what they write**. The missing case is defined by wanting to write **nothing** while local legitimately runs ahead — git's ordinary state of a branch with unpushed commits, pulled repeatedly without complaint.
+
+Measured on a real pair: an OpenBrain vault note mirroring a Google Doc, where the note carries frontmatter, a `Live state` block, and `[[wikilinks]]` the doc will never have. 33 of 81 local lines (40%) are absent from Drive, permanently and by design.
+
+```
+mode        PCT_LOCAL_ONLY = 40         outcome
+pull-only   >= 40 -> fatal              FATAL lopsided-pull, aborts
+two-way     >= 40 -> fatal (same arm)   FATAL lopsided-pull, aborts
+push-only   >= 15 -> confirm            CONFIRM, proceeds on approval
+```
+
+`scripts/gdsync` line ~165 gates the fatal on `pull-only|two-way` together, so **`two-way` is not an escape hatch** — a natural assumption, and wrong. Only `push-only` treats local-ahead as the premise.
+
+Consequences:
+
+- **A read-only drift check is unreachable through a read-only mode.** The workaround is `--mode push-only`, then stopping after Phase 3. Phases 1 to 3 are pull, diff, classify; nothing reaches Drive unless a `find_and_replace` is issued. It works, but it means selecting a write mode to perform a read, and the operator's protection against an accidental write is that the operator remembers not to write.
+- **The failure is unclearable, which is the specific harm.** The message prescribes "Re-pull," and re-pulling cannot change a proportion that is a structural property of the pair. Same shape as the reverted whole-cell guard in finding 1: a gate that can never be satisfied gets waved through.
+- The 40% threshold is not the bug. Any proportional threshold fails here, because the ratio is stable and legitimate.
+
+**Root cause: the engine has no remote-tracking ref.** Every run is stateless, so "is this export truncated?" has to be inferred from the shape of a single snapshot, and one-sidedness is the only signal available. Git does not guess, because it keeps the last known remote state and compares against it.
+
+**What would fix it, in preference order:**
+
+1. **Persist the last good Drive snapshot per doc** and compare Drive-to-Drive. Truncation then reads as Drive *shrinking* against its own prior state, which is precise, while local-ahead becomes irrelevant to the question. This also makes a genuine three-way merge possible instead of a two-file diff.
+2. **Add a fourth mode** — `compare` or `check`: no write phase, `push-only`'s guard arm, exits after Phase 3. Cheap, and it removes the write-mode-to-do-a-read hazard immediately, but still guesses at truncation.
+3. **Let the caller declare local-only regions** as authoritative, so those lines are excluded from the proportion. The `conventions` input already exists as a channel for exactly this kind of doc-specific rule, and it is currently only surfaced at classify time, not fed to the guards.
+
+Option 2 is the small fix and option 1 is the right one. They are not exclusive: a `compare` mode built on a persisted snapshot is what the git analogy actually implies.
+
+**Not yet measured:** whether a genuinely truncated export on a local-ahead pair is distinguishable at all under the current single-snapshot design. Finding 1's lesson applies — do not ship a guard whose precision has not been measured on real documents.
+
+---
+
 ## Retirement — what would let these be deleted rather than folded in
 
 | If the server gains… | Then… |
