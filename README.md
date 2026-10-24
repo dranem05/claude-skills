@@ -15,6 +15,7 @@ ln -s ~/claude-skills/asana-rest           ~/.claude/skills/asana-rest
 ln -s ~/claude-skills/be-concise           ~/.claude/skills/be-concise
 ln -s ~/claude-skills/gdoc-sync            ~/.claude/skills/gdoc-sync
 ln -s ~/claude-skills/transcribe-video-mac ~/.claude/skills/transcribe-video-mac
+ln -s ~/claude-skills/unslop               ~/.claude/skills/unslop
 ```
 
 **If a skill directory of that name already exists, remove it first.** `ln -s` against an existing *directory* silently creates a symlink *inside* it (`~/.claude/skills/gdoc-sync/gdoc-sync`) and exits 0 — nothing is installed, and the old copy keeps loading. Check with `ls -l ~/.claude/skills/`: an installed skill shows as `name -> /path/to/repo/name`.
@@ -32,6 +33,12 @@ The interesting part: the useful half is the **anti-rules**. "Be concise" is eas
 The sharpest of them isn't a length rule at all: when drafting a message, cut what *this recipient* already knows. That's a semantic test rather than a word budget, and it cuts differently — sometimes removing a paragraph, sometimes adding one where the reader lacks context a colleague would have.
 
 Derived by auditing a real correction log rather than by theorizing about verbosity, which is why it reads as second-order. Adapt the specifics to your own voice; the anti-rules are the portable part.
+
+### unslop
+
+Edits text to remove AI writing tells: em dashes, colon connectors, inline headers, metaphor nouns, passive voice, over-compression and the rest of a numbered rule list. Invoked as `/unslop`; prose only.
+
+Vendored unchanged from [pstack](https://github.com/cursor/plugins/tree/main/harness/pstack) by Lauren Tan (MIT, `unslop/LICENSE`), `harness/pstack/claude-code/skills/unslop/SKILL.md` at commit `182f2ce414e8`. It is the one pstack skill taken; the rest of the package (58 skills, 2 agents) is a whole engineering workflow. Its frontmatter sets `disable-model-invocation: true`, so it runs when you type `/unslop`, not on Claude's own initiative. To update, re-fetch that file and diff.
 
 ### asana-rest
 
