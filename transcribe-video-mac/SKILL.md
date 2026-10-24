@@ -18,7 +18,9 @@ This is a **script-backed** skill: the transcription is done by
 
 ## Inputs
 
-- `$1`: path to a local media file (`.mp4`, `.mov`, `.mkv`, `.m4a`, `.mp3`, `.wav`, …).
+Read these from what the user typed after the command (Claude Code passes it as an `ARGUMENTS:` line).
+
+- **Media path** (required): path to a local media file (`.mp4`, `.mov`, `.mkv`, `.m4a`, `.mp3`, `.wav`, …).
   **One file per call** — a second path is refused, not queued. Loop for a batch.
 - Optional `--model NAME`: Whisper model (default `base.en`). Bigger = more
   accurate, slower: `tiny.en` < `base.en` < `small.en` < `medium.en`; drop the

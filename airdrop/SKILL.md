@@ -9,7 +9,9 @@ Send one or more files to a nearby device over AirDrop. macOS only.
 
 ## Inputs
 
-- `$1..$N`: path(s) of the file(s) to send. At least one required.
+Read these from what the user typed after the command (Claude Code passes it as an `ARGUMENTS:` line).
+
+- **Paths** (required; one or more): the file(s) to send. A path with spaces may be quoted; if it is unclear where one path ends and the next begins, or no path is given, ask before sending.
 
 ## What's automated vs. human
 
